@@ -65,6 +65,7 @@ Esse relatório é o objetivo — é ele que diz que o diagrama está ligado do 
 | [Guia inicial](docs/getting-started.pt-BR.md) | primeira execução, cinco minutos |
 | [CONTRACT.md](CONTRACT.md) | o contrato de fiação — leia para escrever o seu próprio Hub *(inglês)* |
 | [Arquitetura](docs/architecture.md) | as quatro portas, e por que o corte é onde é *(inglês)* |
+| [Cobertura](docs/coverage.md) | o que o Hub alcança, o que não alcança, e por quê *(inglês)* |
 | [Acrescentar um recurso](docs/adding-a-resource.md) | uma pasta, um arquivo, nenhuma mudança no núcleo *(inglês)* |
 
 O contrato é versionado e independente desta implementação. Se você preferir escrever o seu

@@ -62,6 +62,7 @@ report is the point — it is what tells you the diagram is wired the way you dr
 | [Getting started](docs/getting-started.md) | first run, five minutes |
 | [CONTRACT.md](CONTRACT.md) | the wiring contract — read this to write your own Hub |
 | [Architecture](docs/architecture.md) | the four ports, and why they are cut where they are |
+| [Coverage](docs/coverage.md) | what Hub can reach, what it cannot, and why |
 | [Adding a resource](docs/adding-a-resource.md) | one folder, one file, no core changes |
 
 The contract is versioned and independent of this implementation. If you would rather write your
