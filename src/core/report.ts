@@ -11,9 +11,17 @@
 import { displayName } from './discovery.js';
 import type { Hop, Neighbor, Report } from './types.js';
 
-/** Trims an error to something a log line can hold without losing the useful part. */
+/**
+ * Trims an error to something a report line can hold without losing the useful part.
+ *
+ * The bare name `Error` is dropped rather than printed. Services already answer with their own —
+ * `NoSuchBucket: The specified bucket does not exist` — and prefixing that with `Error:` adds a
+ * word to every line and information to none.
+ */
 const reason = (err: unknown): string => {
-	const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+	let text: string;
+	if (err instanceof Error) text = err.name === 'Error' ? err.message : `${err.name}: ${err.message}`;
+	else text = String(err);
 	return text.length <= 300 ? text : text.slice(0, 300) + '…';
 };
 
