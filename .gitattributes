@@ -1,0 +1,10 @@
+# LF in the repository and in the working tree, on every platform.
+#
+# Not cosmetic: the shell script inside .github/workflows/docs-parity.yml is written to disk and
+# run by bash on the runner. Checked out with CRLF, every line ends in a stray carriage return and
+# the job fails with `$'\r': command not found`.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

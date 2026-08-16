@@ -1,0 +1,52 @@
+# Translated docs rot asymmetrically: the English one gets updated because it is the one
+# contributors read, the translation drifts, and a stale translation is worse than none — it
+# teaches the wrong thing with an air of authority. Only a mechanical check prevents this.
+#
+# Scope is deliberately narrow. Only the two documents that are meant to be bilingual are paired
+# here; the contract, the architecture and the reference are English-only on purpose, because they
+# change every week and are read by people already doing the work.
+
+name: docs parity
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'README.pt-BR.md'
+      - 'docs/getting-started.md'
+      - 'docs/getting-started.pt-BR.md'
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Every bilingual document must move in both languages
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          changed="$(git diff --name-only "$base"...HEAD)"
+
+          fail=0
+          check() {
+            local en="$1" pt="$2"
+            local en_hit pt_hit
+            en_hit=$(grep -qxF "$en" <<< "$changed" && echo 1 || echo 0)
+            pt_hit=$(grep -qxF "$pt" <<< "$changed" && echo 1 || echo 0)
+            if [ "$en_hit" != "$pt_hit" ]; then
+              if [ "$en_hit" = 1 ]; then
+                echo "::error file=$pt::$en changed but $pt did not. Update the translation, or say in the PR why it does not apply."
+              else
+                echo "::error file=$en::$pt changed but $en did not. The English document is the canonical one."
+              fi
+              fail=1
+            fi
+          }
+
+          check "README.md"               "README.pt-BR.md"
+          check "docs/getting-started.md" "docs/getting-started.pt-BR.md"
+
+          exit $fail

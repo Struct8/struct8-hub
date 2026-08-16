@@ -1,0 +1,72 @@
+# Hub
+
+**English** · [Português](README.pt-BR.md)
+
+Hub is the code that runs *inside* the resources you draw.
+
+You draw a diagram — a function, a queue, a bucket, a wire between them. Struct8 generates the
+infrastructure. Hub is what fills the compute: it discovers every resource it was wired to,
+forwards whatever arrives to all of them, and reports each hop so you can watch the diagram work.
+
+**There is no list of destinations in the code.** The wire is the configuration.
+
+```js
+import { hub } from '@struct8/hub';
+import '@struct8/hub/r/aws_sqs_queue';
+import '@struct8/hub/r/aws_s3_bucket';
+
+export const handler = hub.lambda();
+```
+
+That is the whole generated file. Everything else is versioned in the package.
+
+---
+
+## Status
+
+**Pre-release. Nothing is published yet.** This repository currently holds the contract, the
+architecture and the type spine. The core implementation and the AWS Lambda runtime are next.
+
+| piece | state |
+|---|---|
+| [Wiring contract](CONTRACT.md) v1 | documented, matches what the generator emits today |
+| Core (`discovery`, `envelope`, `registry`, `report`) | in progress |
+| AWS Lambda runtime | next |
+| Container / VM runtime | needs source-side discovery — see [CONTRACT.md](CONTRACT.md#known-gaps) |
+| Cloudflare Workers runtime | planned |
+
+Cross-provider wiring (a Lambda writing to R2, a Worker reading from SQS) is **out of scope for
+now** and deliberately not designed around. The [architecture](docs/architecture.md) explains
+which seams were left open so it can arrive later without a rewrite.
+
+## How it works
+
+**Discovery.** The generator injects one environment variable per wire, named after the target's
+type, the value it carries, and the wire's own label. Hub parses those names and rebuilds the
+neighbor list. Nothing is hard-coded, and a wire the diagram doesn't have cannot be reached.
+
+**Normalization.** Whatever triggered the workload — a queue batch, an object created, an HTTP
+request, a stream record — is reduced to a list of items plus a description of where they came
+from. One shape for every event source.
+
+**Fan-out.** Each neighbor is looked up in the registry and handed the message. One small
+function per resource type; the core never learns their names.
+
+**Report.** Every hop produces a line: which wire, which target, how long, and what failed. That
+report is the point — it is what tells you the diagram is wired the way you drew it.
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | first run, five minutes |
+| [CONTRACT.md](CONTRACT.md) | the wiring contract — read this to write your own Hub |
+| [Architecture](docs/architecture.md) | the four ports, and why they are cut where they are |
+| [Adding a resource](docs/adding-a-resource.md) | one folder, one file, no core changes |
+
+The contract is versioned and independent of this implementation. If you would rather write your
+own hub in your own language, [CONTRACT.md](CONTRACT.md) is all you need — that is on purpose.
+
+## License
+
+[Apache 2.0](LICENSE).

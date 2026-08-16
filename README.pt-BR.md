@@ -1,0 +1,75 @@
+# Hub
+
+[English](README.md) · **Português**
+
+O Hub é o código que roda *dentro* dos recursos que você desenha.
+
+Você desenha um diagrama — uma função, uma fila, um bucket, um fio ligando os três. O Struct8
+gera a infraestrutura. O Hub é o que preenche a computação: ele descobre todo recurso ao qual foi
+ligado, repassa para todos eles o que chegar, e relata cada salto para você ver o diagrama
+funcionando.
+
+**Não existe lista de destinos no código.** Quem configura o Hub é o fio.
+
+```js
+import { hub } from '@struct8/hub';
+import '@struct8/hub/r/aws_sqs_queue';
+import '@struct8/hub/r/aws_s3_bucket';
+
+export const handler = hub.lambda();
+```
+
+O arquivo gerado é isso. Todo o resto está versionado dentro do pacote.
+
+---
+
+## Situação
+
+**Pré-lançamento. Nada foi publicado ainda.** Este repositório hoje contém o contrato, a
+arquitetura e a espinha de tipos. A implementação do núcleo e o runtime da AWS Lambda vêm a
+seguir.
+
+| peça | estado |
+|---|---|
+| [Contrato de fiação](CONTRACT.md) v1 | documentado, corresponde ao que o gerador emite hoje |
+| Núcleo (`discovery`, `envelope`, `registry`, `report`) | em andamento |
+| Runtime da AWS Lambda | próximo |
+| Runtime de contêiner / VM | depende da descoberta pelo lado de origem — ver [CONTRACT.md](CONTRACT.md#known-gaps) |
+| Runtime do Cloudflare Workers | planejado |
+
+Fio entre provedores (uma Lambda escrevendo no R2, um Worker lendo do SQS) está **fora do escopo
+por enquanto**, e de propósito o desenho não gira em torno disso. A
+[arquitetura](docs/architecture.md) explica quais costuras ficaram abertas para que isso possa
+chegar depois sem reescrita.
+
+## Como funciona
+
+**Descoberta.** O gerador injeta uma variável de ambiente por fio, nomeada com o tipo do alvo, o
+valor que ela carrega e o rótulo do próprio fio. O Hub lê esses nomes e remonta a lista de
+vizinhos. Nada é fixo no código, e um fio que o diagrama não tem não pode ser alcançado.
+
+**Normalização.** O que quer que tenha disparado a carga — um lote de fila, um objeto criado, uma
+requisição HTTP, um registro de stream — é reduzido a uma lista de itens mais uma descrição de
+onde eles vieram. Uma forma só para toda origem.
+
+**Espalhamento.** Cada vizinho é procurado no registro e recebe a mensagem. Uma função pequena por
+tipo de recurso; o núcleo nunca aprende o nome deles.
+
+**Relatório.** Cada salto produz uma linha: qual fio, qual alvo, quanto tempo, e o que falhou.
+Esse relatório é o objetivo — é ele que diz que o diagrama está ligado do jeito que você desenhou.
+
+## Documentação
+
+| | |
+|---|---|
+| [Guia inicial](docs/getting-started.pt-BR.md) | primeira execução, cinco minutos |
+| [CONTRACT.md](CONTRACT.md) | o contrato de fiação — leia para escrever o seu próprio Hub *(inglês)* |
+| [Arquitetura](docs/architecture.md) | as quatro portas, e por que o corte é onde é *(inglês)* |
+| [Acrescentar um recurso](docs/adding-a-resource.md) | uma pasta, um arquivo, nenhuma mudança no núcleo *(inglês)* |
+
+O contrato é versionado e independente desta implementação. Se você preferir escrever o seu
+próprio hub, na sua própria linguagem, o [CONTRACT.md](CONTRACT.md) basta — isso é intencional.
+
+## Licença
+
+[Apache 2.0](LICENSE).

@@ -1,0 +1,37 @@
+{
+	"name": "@struct8/hub",
+	"version": "0.0.0",
+	"description": "The code that runs inside the resources you draw. Discovers its neighbors from the wiring, forwards what arrives, and reports every hop.",
+	"license": "Apache-2.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=20"
+	},
+	"exports": {
+		".": "./dist/index.js",
+		"./r/*": "./dist/resources/*/index.js",
+		"./runtimes/*": "./dist/runtimes/*.js",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"CONTRACT.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"gen:registry": "node scripts/gen-registry.mjs",
+		"test": "node --test"
+	},
+	"devDependencies": {
+		"typescript": "^5.6.0"
+	},
+	"keywords": [
+		"struct8",
+		"cloudman",
+		"infrastructure",
+		"diagram",
+		"serverless"
+	]
+}
