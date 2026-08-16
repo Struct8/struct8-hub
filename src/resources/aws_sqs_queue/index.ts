@@ -23,10 +23,18 @@ register({
 		// writes for a queue wire grants SendMessage, ReceiveMessage, DeleteMessage and
 		// GetQueueAttributes — it does not grant GetQueueUrl, so asking AWS to resolve the name
 		// would fail on permission in every diagram that has not been edited by hand.
-		const url =
-			n.props['QUEUE_URL'] ??
-			n.props['URL'] ??
-			`https://sqs.${region}.amazonaws.com/${ctx.account(n) ?? ''}/${n.props['NAME'] ?? ''}`;
+		//
+		// Composing needs every part. Falling back to an empty name builds a URL that is a valid
+		// string and a nonsense address, and the failure then arrives from AWS as something about
+		// a queue that does not exist — a long way from "the wire carried no name".
+		let url = n.props['QUEUE_URL'] ?? n.props['URL'];
+		if (!url) {
+			const name = n.props['NAME'];
+			const account = ctx.account(n);
+			if (!name) throw new Error('no queue name and no queue URL on the wire');
+			if (!account) throw new Error(`no account for queue ${name}, and none for the workload`);
+			url = `https://sqs.${region}.amazonaws.com/${account}/${name}`;
+		}
 
 		await aws.json(
 			'sqs',

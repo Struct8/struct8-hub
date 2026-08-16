@@ -15,10 +15,18 @@ register({
 		const region = ctx.region(n);
 		if (!region) throw new Error('no region for the topic and none for the workload');
 
-		// Same reasoning as the queue: the generated policy grants sns:Publish and nothing else,
-		// so the ARN is composed rather than looked up.
-		const arn =
-			n.props['ARN'] ?? `arn:aws:sns:${region}:${ctx.account(n) ?? ''}:${n.props['NAME'] ?? ''}`;
+		// Same reasoning as the queue: the generated policy grants sns:Publish and nothing else, so
+		// the ARN is composed rather than looked up — and composing needs every part. An ARN with
+		// an empty topic segment is still a string, and the failure it produces says nothing about
+		// the wire that was missing a name.
+		let arn = n.props['ARN'];
+		if (!arn) {
+			const name = n.props['NAME'];
+			const account = ctx.account(n);
+			if (!name) throw new Error('no topic name and no topic ARN on the wire');
+			if (!account) throw new Error(`no account for topic ${name}, and none for the workload`);
+			arn = `arn:aws:sns:${region}:${account}:${name}`;
+		}
 
 		await aws.query(
 			'sns',

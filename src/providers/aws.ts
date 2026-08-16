@@ -162,7 +162,7 @@ export async function query(
 	);
 }
 
-/** Plain REST: S3, and anything else addressed by URL rather than by action. */
+/** Plain REST: S3, Lambda's invoke path, and anything else addressed by URL rather than by action. */
 export const rest = (
 	url: string,
 	service: string,
@@ -171,3 +171,41 @@ export const rest = (
 	what: string,
 	fetchImpl: typeof fetch = fetch
 ): Promise<Response> => send(url, service, region, init, what, fetchImpl);
+
+/**
+ * An ordinary request, unsigned.
+ *
+ * For destinations that are not AWS APIs even though AWS runs them: a load balancer in front of
+ * somebody's application, for instance. Signing those would add an `Authorization` header the
+ * application did not ask for and may well reject.
+ */
+export async function plain(
+	url: string,
+	init: RequestInit,
+	what: string,
+	fetchImpl: typeof fetch = fetch
+): Promise<Response> {
+	const res = await fetchImpl(url, init);
+	if (!res.ok) throw new Error(`HTTP ${res.status} on ${what}`);
+	return res;
+}
+
+/**
+ * Base64 for the JSON protocols that carry binary — Kinesis and Firehose both take `Data` that
+ * way. Encoding through TextEncoder rather than handing `btoa` a string directly: `btoa` throws on
+ * any character above U+00FF, so a message with an accent in it would fail and a plain one would
+ * not, which is a bug that only shows up in production and only for some users.
+ */
+export const b64 = (text: string): string => {
+	const bytes = new TextEncoder().encode(text);
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
+};
+
+/** The inverse, for reading records off a stream. */
+export const unb64 = (encoded: string): string => {
+	const binary = atob(encoded);
+	const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+	return new TextDecoder().decode(bytes);
+};

@@ -82,3 +82,12 @@ export function advance(envelope: Envelope, self: string): Envelope | null {
 /** Serializes for the wire. */
 export const seal = (envelope: Envelope): string =>
 	JSON.stringify({ [MARKER]: VERSION, ...envelope });
+
+/**
+ * Whether an already-parsed value is one of ours.
+ *
+ * For arrivals that hand over a decoded object rather than a string — a direct Lambda invocation
+ * carries the payload as JSON, not as text.
+ */
+export const isEnvelope = (value: unknown): boolean =>
+	value !== null && typeof value === 'object' && (value as Record<string, unknown>)[MARKER] === VERSION;

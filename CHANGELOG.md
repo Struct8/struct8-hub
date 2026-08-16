@@ -22,9 +22,20 @@ AWS account.
 - Core: `discovery`, `envelope`, `registry`, `report`, `hub`. 28 tests, no network.
 - AWS transport over signed `fetch` (`aws4fetch`), with signing kept separate from sending so a
   sender can be exercised with a fake `fetch` — and so the identity port has somewhere to attach.
-- Resources: `aws_sqs_queue`, `aws_sns_topic`, `aws_s3_bucket`.
+- Every applicable AWS resource: 18 modules covering 14 send targets and 12 event sources. The
+  candidate set was derived from the catalog rather than estimated — see `docs/coverage.md`.
+- Conformance suite that iterates the registry, so a new resource is tested without anyone writing
+  a test for it. 148 tests, no network.
 - AWS Lambda runtime.
 - README and getting-started guide in English and Brazilian Portuguese.
+
+### Fixed
+
+- The queue and topic senders composed a target URL and ARN with an empty segment when the wire
+  carried no `NAME`, and sent to it. Both were valid strings, so nothing complained locally; the
+  answer from AWS would have been an error about a resource that does not exist, a long way from
+  *the wire carried no name*. Found by the conformance suite on its first run, against code that
+  had already been reviewed by hand.
 
 ### Notes
 
