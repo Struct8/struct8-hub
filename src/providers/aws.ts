@@ -116,7 +116,25 @@ async function send(
 	return res;
 }
 
-/** JSON-RPC protocol: SQS, DynamoDB, Kinesis, Firehose, Lambda's control plane. */
+/**
+ * Which JSON-RPC dialect each service speaks.
+ *
+ * There is no negotiating and no default that works: send 1.0 to Kinesis and the answer is a bare
+ * 404, send 1.1 to DynamoDB and it is a bare 404 the other way. Neither says anything about
+ * content types, so the failure looks like a wrong endpoint and sends you looking in the wrong
+ * place. Measured against the live APIs, not read off a page.
+ */
+const JSON_DIALECT: Record<string, '1.0' | '1.1'> = {
+	dynamodb: '1.0',
+	sqs: '1.0',
+	kinesis: '1.1',
+	firehose: '1.1',
+	logs: '1.1',
+	ssm: '1.1',
+	secretsmanager: '1.1',
+};
+
+/** JSON-RPC protocol: SQS, DynamoDB, Kinesis, Firehose, CloudWatch Logs, SSM, Secrets Manager. */
 export async function json(
 	service: string,
 	region: string,
@@ -124,13 +142,20 @@ export async function json(
 	body: unknown,
 	fetchImpl: typeof fetch = fetch
 ): Promise<unknown> {
+	const dialect = JSON_DIALECT[service];
+	if (!dialect) {
+		// Refused rather than guessed. A wrong guess here is a 404 in production and a green test
+		// suite, because a fake transport answers 200 whatever the content type says.
+		throw new Error(`unknown JSON dialect for service ${service}: add it to JSON_DIALECT in providers/aws.ts`);
+	}
+
 	const res = await send(
 		endpoint(service, region),
 		service,
 		region,
 		{
 			method: 'POST',
-			headers: { 'content-type': 'application/x-amz-json-1.0', 'x-amz-target': target },
+			headers: { 'content-type': `application/x-amz-json-${dialect}`, 'x-amz-target': target },
 			body: JSON.stringify(body),
 		},
 		target,
