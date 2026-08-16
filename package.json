@@ -22,9 +22,10 @@
 		"build": "tsc -p tsconfig.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"gen:registry": "node scripts/gen-registry.mjs",
-		"test": "node --test"
+		"test": "npm run build && node --experimental-strip-types --test"
 	},
 	"devDependencies": {
+		"@types/node": "^26.2.0",
 		"typescript": "^5.6.0"
 	},
 	"keywords": [
@@ -33,5 +34,8 @@
 		"infrastructure",
 		"diagram",
 		"serverless"
-	]
+	],
+	"dependencies": {
+		"aws4fetch": "^1.0.20"
+	}
 }

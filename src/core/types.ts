@@ -67,8 +67,14 @@ export interface Arrival {
 	readonly items: readonly Item[];
 }
 
-/** Normalizes a platform-specific event into an {@link Arrival}. */
-export type Ingress = (raw: unknown) => Arrival | Promise<Arrival>;
+/**
+ * Normalizes a platform-specific event into an {@link Arrival}.
+ *
+ * Returns `null` when the event did not come from this resource. Detection lives with the
+ * resource that understands the shape, not in a central switch that has to be edited every time a
+ * source is added.
+ */
+export type Ingress = (raw: unknown) => Arrival | null | Promise<Arrival | null>;
 
 // ---------------------------------------------------------------------------
 // Envelope
@@ -154,6 +160,17 @@ export interface Report {
 	readonly trace: string;
 	readonly origin: string;
 	readonly hops: readonly Hop[];
+	/**
+	 * Ids of items whose fan-out failed, for sources that accept a partial-batch report. Empty is
+	 * the success answer and must still be sent: an absent list makes the source treat the whole
+	 * batch as failed and redeliver all of it.
+	 */
+	readonly failed: readonly string[];
+	/**
+	 * Items stopped because the envelope ran out of hops. Counted rather than hidden — a silently
+	 * dropped item looks exactly like a delivered one from outside.
+	 */
+	readonly dropped: number;
 }
 
 // ---------------------------------------------------------------------------

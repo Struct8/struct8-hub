@@ -14,28 +14,46 @@ src/resources/aws_sns_topic/index.ts
 ```
 
 ```ts
+import { seal } from '../../core/envelope.js';
 import { register } from '../../core/registry.js';
-import { aws } from '../../providers/aws.js';
+import * as aws from '../../providers/aws.js';
 
 register({
   type: 'aws_sns_topic',
   capabilities: ['topic'],
 
   async send(n, envelope, ctx) {
-    const arn = n.props.ARN ?? `arn:aws:sns:${ctx.region(n)}:${ctx.account(n)}:${n.props.NAME}`;
-    await aws(ctx).sns.publish({ TopicArn: arn, Message: envelope.body });
+    const region = ctx.region(n);
+    if (!region) throw new Error('no region for the topic and none for the workload');
+
+    const arn = n.props['ARN'] ?? `arn:aws:sns:${region}:${ctx.account(n) ?? ''}:${n.props['NAME'] ?? ''}`;
+
+    await aws.query(
+      'sns',
+      region,
+      { Action: 'Publish', Version: '2010-03-31', TopicArn: arn, Message: seal(envelope) },
+      ctx.fetch
+    );
   },
 
   receive(raw) {
-    const r = (raw as SnsEvent).Records[0].Sns;
+    const sns = (raw as { Records?: { Sns?: { TopicArn?: string; Message?: string } }[] })?.Records?.[0]?.Sns;
+    if (!sns) return null;
+
     return {
       origin: 'aws:sns',
-      describe: `SNS ${r.TopicArn.split(':').pop()}`,
-      items: [{ body: r.Message }],
+      describe: `SNS ${sns.TopicArn?.split(':').pop() ?? '?'}`,
+      items: [{ body: sns.Message ?? '' }],
     };
   },
 });
 ```
+
+Two things in there are not decoration.
+
+`seal(envelope)` is what goes on the wire, never `envelope.body`. Sending the bare body drops the correlation id and the hop budget, and the next Hub in the chain sees a fresh message with a full budget again — which is a loop that no longer terminates.
+
+`receive` returns `null` when the event did not come from this resource. That is how detection stays with the resource that understands the shape instead of collecting in a central switch that has to be edited every time a source is added.
 
 Then add the line to the barrel:
 
@@ -74,9 +92,11 @@ is a wire the diagram cannot color.
 `process.env` directly makes the module untestable and breaks on Workers, where there is no
 `process`.
 
-**Do not import a cloud SDK at module scope.** Import inside `send`, or take it from `ctx`. A
-top-level import is paid by every deployment that includes this file, whether or not the diagram
-uses it.
+**Reach the cloud through `src/providers/`, not through a service SDK.** Those helpers sign a
+request and hand it to `ctx.fetch`, which is the same code path in a Lambda, a container and a
+Worker — and it is what lets a test run a sender with a fake `fetch` and no network. A per-service
+SDK client would be a second code path and a bundle cost paid by every deployment that includes
+the file.
 
 **Be idempotent under retry.** Batched sources redeliver. A module that appends without a key
 turns one redelivery into a duplicate that is indistinguishable from a real second message.
