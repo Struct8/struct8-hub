@@ -37,6 +37,10 @@ against a live account. Nothing here has been applied from a diagram.
 | Container / VM runtime | needs source-side discovery — see [CONTRACT.md](CONTRACT.md#known-gaps) |
 | Cloudflare Workers runtime | planned |
 
+**A built file is in the repository: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — one file,
+every AWS resource, no dependencies, `nodejs22.x` / `index.handler`. Take it as it is, or build a
+smaller one.
+
 **You do not need npm to run this.** `scripts/bundle.mjs` inlines the core, the resources your
 diagram uses and the request signer into one file, so a function carries no dependencies at all:
 

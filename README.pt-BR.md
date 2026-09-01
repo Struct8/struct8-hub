@@ -38,6 +38,10 @@ contra uma conta real. Nada aqui foi aplicado a partir de um diagrama.
 | Runtime de contêiner / VM | depende da descoberta pelo lado de origem — ver [CONTRACT.md](CONTRACT.md#known-gaps) |
 | Runtime do Cloudflare Workers | planejado |
 
+**Já existe um arquivo pronto no repositório: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — um
+arquivo, todos os recursos AWS, sem dependência, `nodejs22.x` / `index.handler`. Pegue como está,
+ou construa um menor.
+
 **Você não precisa de npm para rodar isto.** O `scripts/bundle.mjs` embute o núcleo, os recursos
 que o seu diagrama usa e o assinador de requisição num arquivo só, então a função não carrega
 dependência nenhuma:

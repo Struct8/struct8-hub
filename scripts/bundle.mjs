@@ -19,7 +19,7 @@
 
 import { build } from 'esbuild';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32 } from 'node:zlib';
 
@@ -36,7 +36,8 @@ const available = readdirSync(join(root, 'src', 'resources'), { withFileTypes: t
 
 const chosen = (arg('resources', available.join(','))).split(',').map((s) => s.trim()).filter(Boolean);
 const runtime = arg('runtime', 'lambda');
-const out = arg('out', join('build', 'hub.zip'));
+const raw = process.argv.includes('--raw');
+const out = arg('out', raw ? join('build', 'index.mjs') : join('build', 'hub.zip'));
 
 const unknown = chosen.filter((t) => !available.includes(t));
 if (unknown.length) {
@@ -71,16 +72,25 @@ try {
 	});
 
 	const code = result.outputFiles[0].text;
-	const zip = storedZip('index.mjs', Buffer.from(code, 'utf8'));
 
-	mkdirSync(dirname(join(root, out)), { recursive: true });
-	writeFileSync(join(root, out), zip);
+	// Absolute paths are left alone. Joining one onto the repository root produces a path like
+	// C:/repo/C:/tmp/x, which Windows accepts and writes somewhere nobody was looking for.
+	const target = isAbsolute(out) ? out : join(root, out);
+	mkdirSync(dirname(target), { recursive: true });
+
+	// --raw writes the module itself instead of a zip. That is what goes into a
+	// CloudMan-Templates folder, where Terraform's archive_file zips the directory at apply time
+	// and a zip inside it would just be a zip inside a zip.
+	if (raw) {
+		writeFileSync(target, code);
+	} else {
+		writeFileSync(target, storedZip('index.mjs', Buffer.from(code, 'utf8')));
+	}
 
 	console.log(`${out}`);
 	console.log(`  resources  ${chosen.length}/${available.length}: ${chosen.join(', ')}`);
 	console.log(`  runtime    ${runtime}`);
 	console.log(`  code       ${(code.length / 1024).toFixed(1)} KiB`);
-	console.log(`  zip        ${(zip.length / 1024).toFixed(1)} KiB`);
 	console.log(`  handler    index.handler`);
 } finally {
 	rmSync(entry, { force: true });

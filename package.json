@@ -22,7 +22,8 @@
 		"build": "tsc -p tsconfig.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"gen:registry": "node scripts/gen-registry.mjs",
-		"test": "npm run build && node --experimental-strip-types --test"
+		"test": "npm run build && node --experimental-strip-types --test",
+		"prebuilt": "node scripts/bundle.mjs --raw --out prebuilt/index.mjs"
 	},
 	"devDependencies": {
 		"@types/node": "^26.2.0",
