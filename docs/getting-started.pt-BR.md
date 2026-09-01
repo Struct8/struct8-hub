@@ -8,8 +8,12 @@
 > aqui o ambiente foi entregue à mão. Os passos 1 e 2 abaixo são, portanto, a parte que falta
 > provar.
 >
-> O `@struct8/hub` não está no npm, e não precisa estar: o `node scripts/bundle.mjs` produz um zip
-> autocontido, sem dependência nenhuma.
+> O `@struct8/hub` não está no npm, e não precisa estar: há um arquivo pronto commitado em
+> `prebuilt/index.mjs`.
+>
+> **Montando um template agora?** O passo 2 ainda não é automático — ponha o `prebuilt/index.mjs`
+> em `CloudMan-Templates/LambdaFiles/<nome lógico>/` você mesmo. A seção *Usar num template do
+> CloudMan* no README é a versão curta.
 
 ---
 

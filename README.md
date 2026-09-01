@@ -57,6 +57,24 @@ Cross-provider wiring (a Lambda writing to R2, a Worker reading from SQS) is **o
 now** and deliberately not designed around. The [architecture](docs/architecture.md) explains
 which seams were left open so it can arrive later without a rewrite.
 
+## Use it in a CloudMan template
+
+Terraform zips a *directory* at apply time, so the code is a file in a folder — no npm install, no
+S3 upload, no build step.
+
+1. Take [`prebuilt/index.mjs`](prebuilt/index.mjs).
+2. Put it at `CloudMan-Templates/LambdaFiles/<logical name of the Lambda node>/index.mjs`.
+3. Set the function to `nodejs22.x`, handler `index.handler`.
+
+**The folder name must equal the node's logical name.** That is what composes `source_dir` in the
+generated `archive_file`; a mismatch produces an empty archive and a function that will not start.
+
+Then wire the function to whatever it should reach. Nothing else: no destination list to maintain,
+no code to write. Hub reads the wires out of its own environment and reports what each one did —
+which target, how long, and the reason when one fails.
+
+Details, and how to build a smaller file, in [prebuilt/README.md](prebuilt/README.md).
+
 ## How it works
 
 **Discovery.** The generator injects one environment variable per wire, named after the target's
@@ -78,6 +96,7 @@ report is the point — it is what tells you the diagram is wired the way you dr
 | | |
 |---|---|
 | [Getting started](docs/getting-started.md) | first run, five minutes |
+| [prebuilt/index.mjs](prebuilt/index.mjs) | the built file, and where it goes in a template |
 | [CONTRACT.md](CONTRACT.md) | the wiring contract — read this to write your own Hub |
 | [Architecture](docs/architecture.md) | the four ports, and why they are cut where they are |
 | [Coverage](docs/coverage.md) | what Hub can reach, what it cannot, and why |

@@ -60,6 +60,24 @@ por enquanto**, e de propósito o desenho não gira em torno disso. A
 [arquitetura](docs/architecture.md) explica quais costuras ficaram abertas para que isso possa
 chegar depois sem reescrita.
 
+## Usar num template do CloudMan
+
+O Terraform zipa uma *pasta* no apply, então o código é um arquivo dentro de uma pasta — sem npm
+install, sem upload para o S3, sem etapa de build.
+
+1. Pegue o [`prebuilt/index.mjs`](prebuilt/index.mjs).
+2. Ponha em `CloudMan-Templates/LambdaFiles/<nome lógico do nó Lambda>/index.mjs`.
+3. Configure a função como `nodejs22.x`, handler `index.handler`.
+
+**O nome da pasta tem que ser igual ao nome lógico do nó.** É ele que compõe o `source_dir` do
+`archive_file` gerado; nome diferente produz um arquivo vazio e uma função que não sobe.
+
+Depois ligue a função no que ela deve alcançar. Nada além disso: não há lista de destinos para
+manter, nem código para escrever. O Hub lê os fios do próprio ambiente e relata o que cada um fez —
+qual alvo, quanto tempo, e o motivo quando algum falha.
+
+Detalhes, e como construir um arquivo menor, em [prebuilt/README.md](prebuilt/README.md).
+
 ## Como funciona
 
 **Descoberta.** O gerador injeta uma variável de ambiente por fio, nomeada com o tipo do alvo, o
@@ -81,6 +99,7 @@ Esse relatório é o objetivo — é ele que diz que o diagrama está ligado do 
 | | |
 |---|---|
 | [Guia inicial](docs/getting-started.pt-BR.md) | primeira execução, cinco minutos |
+| [prebuilt/index.mjs](prebuilt/index.mjs) | o arquivo pronto, e onde ele entra num template |
 | [CONTRACT.md](CONTRACT.md) | o contrato de fiação — leia para escrever o seu próprio Hub *(inglês)* |
 | [Arquitetura](docs/architecture.md) | as quatro portas, e por que o corte é onde é *(inglês)* |
 | [Cobertura](docs/coverage.md) | o que o Hub alcança, o que não alcança, e por quê *(inglês)* |

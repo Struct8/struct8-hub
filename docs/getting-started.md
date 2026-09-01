@@ -7,8 +7,12 @@
 > has not happened is a deploy where the generator writes the wiring — the environment has been
 > supplied by hand so far. Steps 1 and 2 below are therefore the part still to be proven.
 >
-> `@struct8/hub` is not on npm, and does not need to be: `node scripts/bundle.mjs` produces a
-> self-contained zip with no dependencies.
+> `@struct8/hub` is not on npm, and does not need to be: a built file is committed at
+> `prebuilt/index.mjs`.
+>
+> **Building a template right now?** Step 2 is not yet automatic — put `prebuilt/index.mjs` into
+> `CloudMan-Templates/LambdaFiles/<logical name>/` yourself. The README's *Use it in a CloudMan
+> template* section is the short version.
 
 ---
 
