@@ -184,3 +184,21 @@ The suite that proves this must run against **real generator output**, not hand-
 A hand-written fixture agrees with whoever wrote it; only real output disagrees when the generator
 changes. The retired format in §8.2 is the cautionary case: it left the generator, and the
 consumers that still read it kept passing their own tests.
+
+In this implementation that is `test/contract.test.ts`, running against names captured from
+compiled diagrams — `test/fixtures/generator-output.json` records which files they came from and
+when. `node scripts/capture-contract-fixture.mjs <checkout>` recaptures and reports the drift.
+
+Every captured name must be classified, and the classification is the point:
+
+- **base** — describes the workload itself (`NAME`, `REGION`, `ACCOUNT`) and must never become a
+  neighbor. Reading these as wires would give every workload three phantom destinations.
+- **wired** — a resource this implementation reaches.
+- **ignored** — a resource it does not, *with the reason written down*. `AWS_SUBNET_NAME_0` is
+  emitted by the generator and means nothing to a message; `AWS_DB_INSTANCE_ENDPOINT_0` means
+  something and is blocked on a decision. Both are silence, and only the recorded reason
+  distinguishes a decision from an oversight.
+
+A name that fits none of the three fails the suite. That is deliberate: the default behavior for
+an unclassified type is exactly the failure this contract exists to prevent — the wire is drawn,
+the variable is written, and nothing happens.

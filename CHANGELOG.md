@@ -25,7 +25,14 @@ AWS account.
 - Every applicable AWS resource: 18 modules covering 14 send targets and 12 event sources. The
   candidate set was derived from the catalog rather than estimated — see `docs/coverage.md`.
 - Conformance suite that iterates the registry, so a new resource is tested without anyone writing
-  a test for it. 148 tests, no network.
+  a test for it.
+- Contract test against real generator output, captured from compiled diagrams rather than
+  invented (`test/fixtures/generator-output.json`, recaptured by
+  `scripts/capture-contract-fixture.mjs`). Every captured name must be classified as base, wired,
+  or ignored-with-a-reason; an unclassified one fails the suite, because the default behaviour for
+  an unclassified type is the silence this package exists to remove.
+- Live protocol probe (`scripts/probe-aws.mjs`), read-only, covering all eleven service/protocol
+  pairs. 168 tests offline.
 - AWS Lambda runtime.
 - README and getting-started guide in English and Brazilian Portuguese.
 

@@ -1,0 +1,44 @@
+{
+	"_": [
+		"Every environment-variable name observed in real generator output, captured rather than",
+		"invented. A hand-written fixture agrees with whoever wrote it; only real output disagrees",
+		"when the generator changes — which is the failure this whole package exists to prevent.",
+		"",
+		"Recapture with: node scripts/capture-contract-fixture.mjs <path-to-CloudMan-checkout>"
+	],
+
+	"capturedFrom": [
+		"backend/HCLAWSV2-ts/local-dev/captures/last_payload.json",
+		"backend/HCLAWSV2-ts/test/.plan-scratch/41a00086-da83-4a70-b074-888ddd34970c/main.tf",
+		"backend/HCLAWSV2-ts/test/.plan-scratch/xd3fenz5-LenB6gRJuUJt/main.tf",
+		"scripts/import-harness/.harness-scratch/compile-diagrama/main.tf",
+		"scripts/import-harness/.harness-scratch/ecs-stack-completo/main.tf"
+	],
+
+	"capturedOn": "2026-09-01",
+
+	"base": ["NAME", "REGION", "ACCOUNT"],
+
+	"wired": [
+		"AWS_DYNAMODB_TABLE_NAME_0",
+		"AWS_LAMBDA_FUNCTION_NAME_0",
+		"AWS_S3_BUCKET_NAME_0",
+		"AWS_SECRETSMANAGER_SECRET_NAME_0",
+		"AWS_SNS_TOPIC_NAME_0",
+		"AWS_SQS_QUEUE_NAME_0",
+		"AWS_SSM_PARAMETER_NAME_0"
+	],
+
+	"ignored": {
+		"AWS_AUTOSCALING_GROUP_NAME_0": "infrastructure: a scaling group is not a destination for a message",
+		"AWS_DB_INSTANCE_DB_NAME_0": "blocked: SQL over TCP, see docs/coverage.md",
+		"AWS_DB_INSTANCE_ENDPOINT_0": "blocked: SQL over TCP",
+		"AWS_DB_INSTANCE_SECRET_ARN_0": "blocked: SQL over TCP",
+		"AWS_DB_INSTANCE_USER_NAME_0": "blocked: SQL over TCP",
+		"AWS_EFS_ACCESS_POINT_NAME_0": "blocked: POSIX writes need the filesystem mounted",
+		"AWS_EFS_FILE_SYSTEM_ID_0": "blocked: POSIX writes need the filesystem mounted",
+		"AWS_KMS_KEY_NAME_0": "infrastructure: a key encrypts other wires, it receives nothing",
+		"AWS_SERVICE_DISCOVERY_SERVICE_NAME_0": "blocked: needs discovery to resolve a target",
+		"AWS_SUBNET_NAME_0": "infrastructure: a subnet is not a destination for a message"
+	}
+}
