@@ -2,10 +2,13 @@
 
 **English** · [Português](getting-started.pt-BR.md)
 
-> **Not runnable yet.** `@struct8/hub` is not published, and the core and Lambda runtime are still
-> being written. This page describes the flow it is being built to deliver, and doubles as the
-> specification those pieces have to satisfy. It will lose this banner when the first release
-> lands.
+> **The code runs; this flow has not been driven from a diagram yet.** The core, every applicable
+> AWS resource and the Lambda runtime are done and have been invoked against a live account. What
+> has not happened is a deploy where the generator writes the wiring — the environment has been
+> supplied by hand so far. Steps 1 and 2 below are therefore the part still to be proven.
+>
+> `@struct8/hub` is not on npm, and does not need to be: `node scripts/bundle.mjs` produces a
+> self-contained zip with no dependencies.
 
 ---
 

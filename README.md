@@ -24,16 +24,30 @@ That is the whole generated file. Everything else is versioned in the package.
 
 ## Status
 
-**Pre-release. Nothing is published yet.** This repository currently holds the contract, the
-architecture and the type spine. The core implementation and the AWS Lambda runtime are next.
+**Pre-release: not on npm, and not versioned yet.** The AWS side is complete and has been run
+against a live account. Nothing here has been applied from a diagram.
 
 | piece | state |
 |---|---|
 | [Wiring contract](CONTRACT.md) v1 | documented, matches what the generator emits today |
-| Core (`discovery`, `envelope`, `registry`, `report`) | in progress |
-| AWS Lambda runtime | next |
+| Core (`discovery`, `envelope`, `registry`, `report`) | done, 161 tests |
+| AWS resources | done: 18 modules, 14 send targets, 12 event sources ([coverage](docs/coverage.md)) |
+| AWS Lambda runtime | done, invoked end to end against a live account |
+| Deployable bundle | done: `node scripts/bundle.mjs` produces a 44 KiB zip |
 | Container / VM runtime | needs source-side discovery — see [CONTRACT.md](CONTRACT.md#known-gaps) |
 | Cloudflare Workers runtime | planned |
+
+**You do not need npm to run this.** `scripts/bundle.mjs` inlines the core, the resources your
+diagram uses and the request signer into one file, so a function carries no dependencies at all:
+
+```
+node scripts/bundle.mjs --resources aws_sqs_queue,aws_s3_bucket
+# build/hub.zip -- handler index.handler, runtime nodejs22.x
+```
+
+What has *not* happened: a deploy driven by a CloudMan diagram. The environment variables have
+been fed to the handler by hand, matching what the generator emits, and it reached AWS correctly.
+Proving the generator's real output against this parser is the next step.
 
 Cross-provider wiring (a Lambda writing to R2, a Worker reading from SQS) is **out of scope for
 now** and deliberately not designed around. The [architecture](docs/architecture.md) explains

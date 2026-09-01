@@ -25,17 +25,31 @@ O arquivo gerado é isso. Todo o resto está versionado dentro do pacote.
 
 ## Situação
 
-**Pré-lançamento. Nada foi publicado ainda.** Este repositório hoje contém o contrato, a
-arquitetura e a espinha de tipos. A implementação do núcleo e o runtime da AWS Lambda vêm a
-seguir.
+**Pré-lançamento: não está no npm, e ainda não tem versão.** O lado AWS está completo e já rodou
+contra uma conta real. Nada aqui foi aplicado a partir de um diagrama.
 
 | peça | estado |
 |---|---|
 | [Contrato de fiação](CONTRACT.md) v1 | documentado, corresponde ao que o gerador emite hoje |
-| Núcleo (`discovery`, `envelope`, `registry`, `report`) | em andamento |
-| Runtime da AWS Lambda | próximo |
+| Núcleo (`discovery`, `envelope`, `registry`, `report`) | pronto, 161 testes |
+| Recursos AWS | pronto: 18 módulos, 14 destinos de envio, 12 fontes de evento ([cobertura](docs/coverage.md)) |
+| Runtime da AWS Lambda | pronto, invocado de ponta a ponta contra uma conta real |
+| Pacote implantável | pronto: `node scripts/bundle.mjs` produz um zip de 44 KiB |
 | Runtime de contêiner / VM | depende da descoberta pelo lado de origem — ver [CONTRACT.md](CONTRACT.md#known-gaps) |
 | Runtime do Cloudflare Workers | planejado |
+
+**Você não precisa de npm para rodar isto.** O `scripts/bundle.mjs` embute o núcleo, os recursos
+que o seu diagrama usa e o assinador de requisição num arquivo só, então a função não carrega
+dependência nenhuma:
+
+```
+node scripts/bundle.mjs --resources aws_sqs_queue,aws_s3_bucket
+# build/hub.zip -- handler index.handler, runtime nodejs22.x
+```
+
+O que ainda *não* aconteceu: uma implantação conduzida por um diagrama do CloudMan. As variáveis
+de ambiente foram entregues ao handler à mão, iguais às que o gerador emite, e ele chegou na AWS
+corretamente. Provar a saída real do gerador contra este leitor é o próximo passo.
 
 Fio entre provedores (uma Lambda escrevendo no R2, um Worker lendo do SQS) está **fora do escopo
 por enquanto**, e de propósito o desenho não gira em torno disso. A

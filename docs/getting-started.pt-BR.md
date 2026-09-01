@@ -2,10 +2,14 @@
 
 [English](getting-started.md) · **Português**
 
-> **Ainda não executável.** O `@struct8/hub` não foi publicado, e o núcleo e o runtime da Lambda
-> ainda estão sendo escritos. Esta página descreve o fluxo que está sendo construído, e serve
-> também como especificação do que essas peças têm que entregar. O aviso sai quando a primeira
-> versão for publicada.
+> **O código roda; este fluxo ainda não foi conduzido por um diagrama.** O núcleo, todos os
+> recursos AWS aplicáveis e o runtime da Lambda estão prontos e já foram invocados contra uma
+> conta real. O que ainda não aconteceu é uma implantação em que o gerador escreve a fiação — até
+> aqui o ambiente foi entregue à mão. Os passos 1 e 2 abaixo são, portanto, a parte que falta
+> provar.
+>
+> O `@struct8/hub` não está no npm, e não precisa estar: o `node scripts/bundle.mjs` produz um zip
+> autocontido, sem dependência nenhuma.
 
 ---
 
