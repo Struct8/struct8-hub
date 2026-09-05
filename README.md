@@ -82,9 +82,13 @@ container answers HTTP — and it reads the task role from the ECS credential en
 before it expires, because ECS does not put credentials in the environment the way Lambda does.
 
 ```
-node scripts/bundle.mjs --runtime container --raw --out build/index.mjs
-docker build -f docker/Dockerfile -t struct8-hub .
+npm run prebuilt:image
+docker build -t struct8-hub image
 ```
+
+The build context is `image/`, and the artifact it copies is committed there, so a clean clone
+builds — which is what a CloudMan template applying in somebody else's account is. Details in
+[image/README.md](image/README.md).
 
 Wire the ECS box to whatever it should reach, put a load balancer in front of it, and `POST`
 anything to the task. **The report comes back in the response** instead of going to CloudWatch,

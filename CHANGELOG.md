@@ -34,7 +34,15 @@ AWS account.
 - Live protocol probe (`scripts/probe-aws.mjs`), read-only, covering all eleven service/protocol
   pairs. 168 tests offline.
 - AWS Lambda runtime.
-- Container runtime for ECS (`src/runtimes/container.ts`), plus `docker/Dockerfile` and a
+- `image/`: the container artifact and its `Dockerfile` in one folder, so `docker build image`
+  works from a clean clone. The Dockerfile it replaces copied `build/index.mjs`, which
+  `.gitignore` excludes — it built on the machine that had just run the bundler and nowhere else,
+  including every CI runner and every CloudMan apply. `npm run prebuilt:image` rebuilds it, and
+  the suite fails while it and the source disagree. The artifact differs from `prebuilt/` in one
+  line: it calls `container()` instead of exporting a handler, and a function artifact in a
+  container starts, exits, and is restarted forever with nothing in the log to say why — so that
+  line is asserted too.
+- Container runtime for ECS (`src/runtimes/container.ts`), plus `image/Dockerfile` and a
   `--runtime container` mode in the bundler. Two things differ from Lambda and nothing else does:
   work arrives over HTTP, and the task role is fetched from the container credential endpoint and
   refreshed ahead of expiry — reading it once at startup produces a container that works all

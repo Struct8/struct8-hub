@@ -85,9 +85,13 @@ alcançável, então o contêiner atende HTTP — e lê a task role no endpoint 
 renovando antes de vencer, porque o ECS não deixa credencial no ambiente como a Lambda deixa.
 
 ```
-node scripts/bundle.mjs --runtime container --raw --out build/index.mjs
-docker build -f docker/Dockerfile -t struct8-hub .
+npm run prebuilt:image
+docker build -t struct8-hub image
 ```
+
+O contexto do build é `image/`, e o artefato que ele copia está versionado ali, então um clone
+limpo constrói — que é o que um template do CloudMan é, aplicando na conta de outra pessoa.
+Detalhes em [image/README.md](image/README.md).
 
 Ligue a caixa do ECS no que ela deve alcançar, ponha um balanceador na frente e mande um `POST`
 para a task. **O relatório volta na resposta**, em vez de ir para o CloudWatch — é o jeito mais
