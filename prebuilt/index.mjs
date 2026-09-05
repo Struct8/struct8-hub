@@ -1077,24 +1077,31 @@ register({
   keys: ["SECRET_ARN"],
   capabilities: ["secret"],
   /**
-   * Reads, and deliberately does not report what it read.
+   * Writes the message as the secret's current value.
    *
-   * Same reasoning as the parameter store — the generated policy grants `GetSecretValue` and
-   * nothing that writes — with one difference that matters: the value is a secret. The report
-   * says the wire works and how long it took. It does not say what came back, and neither does
-   * the log. A test tool that prints credentials into CloudWatch is a test tool nobody is
-   * allowed to run.
+   * Same reasoning as the parameter store: the wire leaving a workload is that workload's runtime
+   * permission, and a destination that is only ever read produces a report line indistinguishable
+   * from one that received something.
+   *
+   * Secrets Manager has no overwrite. `PutSecretValue` adds a version and moves the `AWSCURRENT`
+   * label onto it, which from the reader's side is the same outcome — a read returns the last
+   * write — with the previous value kept as `AWSPREVIOUS` because that is the service's model and
+   * not a choice available here.
+   *
+   * `ClientRequestToken` is minted per call. The SDKs fill it in and the raw API does not, and
+   * without it the service's idempotency check cannot tell two writes of the same message apart.
+   *
+   * Nothing about the value reaches the log or the report — the same rule as when this read, for
+   * the same reason: a tool that prints what lives in a secret store is one nobody may run.
    */
-  async send(n, _envelope, ctx) {
+  async send(n, envelope, ctx) {
     const id = n.props["SECRET_ARN"] ?? n.props["ARN"] ?? n.props["NAME"];
     if (!id)
       throw new Error("no secret identifier on the wire");
     const region = ctx.region(n);
     if (!region)
       throw new Error("no region for the secret and none for the workload");
-    const response = await json("secretsmanager", region, "secretsmanager.GetSecretValue", { SecretId: id }, ctx.fetch);
-    const size = (response?.SecretString ?? response?.SecretBinary ?? "").length;
-    console.log(`[secretsmanager] ${n.props["NAME"] ?? id} read, ${size} bytes (value not logged)`);
+    await json("secretsmanager", region, "secretsmanager.PutSecretValue", { SecretId: id, SecretString: seal(envelope), ClientRequestToken: crypto.randomUUID() }, ctx.fetch);
   }
 });
 
@@ -1211,28 +1218,35 @@ register({
 });
 
 // dist/resources/aws_ssm_parameter/index.js
-var LIMIT = 200;
 register({
   type: "aws_ssm_parameter",
   capabilities: ["parameter"],
   /**
-   * Reads, rather than writes.
+   * Writes the message, replacing whatever was there.
    *
-   * The policy the generator writes for this wire grants `GetParameter` and `GetParameters`. A
-   * `PutParameter` would fail on permission in every diagram nobody has edited by hand, so the
-   * wire is exercised the way it is actually allowed to be used. Reading still proves what
-   * matters: the parameter exists, the name resolved, and the permission is there.
+   * A parameter is a destination like any other here: the wire leaving a workload for it is that
+   * workload's runtime permission, and an application keeping state in a parameter writes to it.
+   * The bucket beside it gets `PutObject` and the table gets `PutItem`; this one used to get
+   * reading alone, which produced a report line shaped exactly like theirs while nothing arrived.
+   *
+   * `Overwrite` rather than a version: a parameter holds one value, and a read returns the last
+   * write. Nothing accumulates.
+   *
+   * `Type` is deliberately absent. AWS requires it only for a parameter that does not exist yet,
+   * and sending it on an overwrite is how you get a refusal for changing the type of a
+   * `SecureString` somebody chose on purpose. A parameter drawn on the diagram exists; if it does
+   * not, AWS says exactly that and the report carries it.
+   *
+   * Standard-tier parameters cap at 4 KB, so a larger message is refused by AWS in its own words.
    */
-  async send(n, _envelope, ctx) {
+  async send(n, envelope, ctx) {
     const name = n.props["NAME"];
     if (!name)
       throw new Error("no parameter name on the wire");
     const region = ctx.region(n);
     if (!region)
       throw new Error("no region for the parameter and none for the workload");
-    const response = await json("ssm", region, "AmazonSSM.GetParameter", { Name: name, WithDecryption: true }, ctx.fetch);
-    const value = response?.Parameter?.Value ?? "";
-    console.log(`[ssm] ${name} = ${value.length > LIMIT ? value.slice(0, LIMIT) + "\u2026" : value}`);
+    await json("ssm", region, "AmazonSSM.PutParameter", { Name: name, Value: seal(envelope), Overwrite: true }, ctx.fetch);
   }
 });
 

@@ -62,16 +62,24 @@ The bulk of the work, and mechanical. Each is one file: build a request, sign it
 | `aws_lambda_function_url` | plain HTTPS `POST` | ✓ |
 | `aws_lb` | plain HTTPS `POST` to the DNS name | ✓ |
 | `aws_appsync_graphql_api` | GraphQL `POST` | ✓ |
-| `aws_ssm_parameter` | `GetParameter` — read, see below | ✓ |
-| `aws_secretsmanager_secret` | `GetSecretValue` — read, see below | ✓ |
+| `aws_ssm_parameter` | `PutParameter`, overwriting | ✓ |
+| `aws_secretsmanager_secret` | `PutSecretValue` — see below | ✓ |
 | `aws_kinesis_video_stream` | `DescribeStream` — reachability only, see below | ✓ |
 
-Three of those lines mean less than the others, and say so in their own source.
+**The two parameter stores receive the message, like every other destination here.** They read
+until 2026-09-05, because the wire's generated policy granted reading and nothing else — and a
+report line for a wire that only confirmed a permission was shaped exactly like the S3 line beside
+it, which is the silence this package exists to remove. The catalog now grants `ssm:PutParameter`
+and `secretsmanager:PutSecretValue` on the wire that *leaves* a workload, matching what it already
+granted for a bucket or a table.
 
-**The two parameter stores read rather than write.** The policy the generator writes for those
-wires grants `GetParameter` / `GetSecretValue` and nothing that writes, so the wire is exercised
-the way it is actually permitted to be used. Reading still proves the name resolved and the
-permission is there. The secret's value is never logged and never put in the report.
+A parameter is overwritten: it holds one value, and a read returns the last write. A secret has no
+overwrite — `PutSecretValue` adds a version and moves `AWSCURRENT` onto it, which is the same thing
+from the reader's side. The secret's value is still never logged and never put in the report.
+
+The wire that *enters* a workload is a different thing and stays read-only: a parameter or secret
+wired into an ECS box is injected into the container's `secrets`, and the reader there is ECS
+itself as it starts the task.
 
 **Kinesis Video is described, not written to.** Ingestion means `PutMedia`, a long-lived chunked
 upload of MKV fragments — a session, not a request. Synthesising a fragment out of a text message
