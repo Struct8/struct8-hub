@@ -34,7 +34,7 @@ against a live account. Nothing here has been applied from a diagram.
 | AWS resources | done: 18 modules, 14 send targets, 12 event sources ([coverage](docs/coverage.md)) |
 | AWS Lambda runtime | done, invoked end to end against a live account |
 | Deployable bundle | done: `node scripts/bundle.mjs` produces a 44 KiB zip |
-| Container runtime (ECS) | HTTP in and task-role credentials done; consuming a queue needs source-side discovery ([gap](CONTRACT.md#known-gaps)) |
+| Container runtime (ECS) | done: HTTP in, task-role credentials, SQS consumption behind `HUB_POLL` ([why a variable](CONTRACT.md#known-gaps)) |
 | Cloudflare Workers runtime | planned |
 
 **A built file is in the repository: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — one file,
@@ -94,10 +94,25 @@ which is the fastest way to see whether a diagram is wired the way it was drawn.
 health check that fanned out would fire the whole diagram twice a minute and bill for every hop.
 The port defaults to 8080 and must match both `containerPort` and the target group.
 
-**It does not consume queues yet**, and that is not an omission of effort: reading a queue means
-knowing *which* queue, and the generator emits only the wires that leave a node
-([the gap](CONTRACT.md#known-gaps)). Polling whatever the workload also sends to would be a
-workload consuming its own messages.
+**Consuming a queue** takes one variable, and it is a stopgap with a reason. The generator emits
+only the wires that *leave* a node, so a queue drawn as pointing at this workload produces nothing
+to discover ([the gap](CONTRACT.md#known-gaps)). Draw it the other way — from the ECS box to the
+queue — and name that wire's label:
+
+```
+HUB_POLL=in
+```
+
+The permission is already correct: the policy a queue wire generates grants `ReceiveMessage` and
+`DeleteMessage` alongside `SendMessage`. What is wrong is the arrow, and `HUB_POLL` is what says
+which of a wire's two possible meanings this one carries. The source is excluded from its own
+fan-out, so a message is never written back to the queue it came from, and only the messages that
+were actually forwarded are deleted. When the generator emits source-side variables, the variable
+stops being necessary.
+
+Streams are deliberately not consumable. Shards, iterators, checkpoints and lease coordination
+between tasks are a different job, and doing it badly produces silence or reprocessing rather than
+an error.
 
 ## How it works
 

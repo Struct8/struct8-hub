@@ -134,6 +134,40 @@ export interface Ctx {
 export type Sender = (n: Neighbor, e: Envelope, ctx: Ctx) => Promise<void>;
 
 // ---------------------------------------------------------------------------
+// Consume
+// ---------------------------------------------------------------------------
+
+/**
+ * What one poll returned, and how to forget it.
+ *
+ * `ack` is a closure the resource builds rather than a second method taking ids, because what a
+ * source needs in order to forget a message is its own business: SQS wants a receipt handle, which
+ * is *not* the message id and has no reason to exist anywhere outside the module that read it.
+ */
+export interface Batch extends Arrival {
+	/**
+	 * Called with the items whose fan-out succeeded, and only those.
+	 *
+	 * Acknowledging an item that was never forwarded is how a diagram loses a message in silence.
+	 * The opposite mistake — leaving one behind — costs a redelivery, which is the recoverable half
+	 * of the two.
+	 */
+	ack(delivered: readonly Item[]): Promise<void>;
+}
+
+/**
+ * Takes work off a source that nothing delivers from.
+ *
+ * Only a runtime with no platform poller of its own needs this. On Lambda the event source mapping
+ * *is* this function, run by AWS, which is why the Lambda runtime never calls it.
+ *
+ * Returning an empty batch is the ordinary answer for an idle source, not a failure. An
+ * implementation is expected to long-poll rather than return immediately, or the caller's loop
+ * becomes a billed spin.
+ */
+export type Consume = (n: Neighbor, ctx: Ctx) => Promise<Batch>;
+
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
@@ -213,4 +247,10 @@ export interface ResourceModule {
 	readonly send?: Sender;
 	/** Omit for a resource that can only ever be a target. */
 	readonly receive?: Ingress;
+	/**
+	 * Omit unless the resource can be read on demand. Present on a queue, absent on a bucket — and
+	 * absent on a stream on purpose, because shards, iterators and lease coordination are a
+	 * different job from this one.
+	 */
+	readonly consume?: Consume;
 }

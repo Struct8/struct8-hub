@@ -28,7 +28,7 @@ import { handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
 import { credentials } from '../providers/aws.js';
 import type { AwsCredentials } from '../providers/aws.js';
-import type { Ctx, Neighbor } from '../core/types.js';
+import type { Ctx, Neighbor, Report } from '../core/types.js';
 
 /** The link-local address ECS answers the credential request on. Fixed by AWS, not configurable. */
 const CREDENTIAL_HOST = 'http://169.254.170.2';
@@ -47,6 +47,9 @@ const ASSUMED_LIFETIME_MS = 15 * 60_000;
  * upload.
  */
 const MAX_BODY_BYTES = 1024 * 1024;
+
+/** How long to wait after a failed poll, so a failing endpoint is not retried in a tight loop. */
+const POLL_BACKOFF_MS = 5_000;
 
 type Env = Record<string, string | undefined>;
 
@@ -182,8 +185,80 @@ export interface ContainerOptions {
 	readonly port?: number;
 	/** Largest accepted request body, in bytes. Defaults to 1 MiB. */
 	readonly maxBodyBytes?: number;
+	/**
+	 * Which wired neighbor to consume, overriding `HUB_POLL`. `false` or an empty string leaves the
+	 * container HTTP-only. See {@link selectSource} for how the value is matched.
+	 */
+	readonly poll?: string | false;
 	/** Injectable so the credential endpoint can be tested without one. */
 	readonly fetch?: typeof fetch;
+}
+
+/**
+ * Picks the neighbor to consume.
+ *
+ * **This exists because the contract has no incoming side.** The generator emits only the wires
+ * that leave a node, so a queue drawn as pointing *at* this workload produces no variable at all
+ * and cannot be discovered. What can be discovered is a wire drawn the other way — and the policy
+ * that wire generates already grants ReceiveMessage and DeleteMessage alongside SendMessage, so
+ * the permission to consume is there even though the arrow says otherwise.
+ *
+ * `HUB_POLL` is what resolves that ambiguity, and it is a stopgap with an expiry date: when the
+ * generator emits source-side variables, the direction is no longer guesswork and this goes away.
+ * Until then, naming the input by hand is honest about which of the two meanings a wire carries.
+ *
+ * The value matches a wire's label when it names one, and is otherwise ignored in favour of the
+ * single consumable neighbor. Ambiguity is refused rather than resolved by picking the first —
+ * consuming the wrong queue looks exactly like consuming the right one that happens to be empty.
+ */
+export function selectSource(neighbors: readonly Neighbor[], want: string): Neighbor {
+	const candidates = neighbors.filter((n) => registry.get(n.type)?.consume);
+
+	if (candidates.length === 0) {
+		const drawn = neighbors.map((n) => `${n.type}/${n.label}`).join(', ') || 'nothing';
+		throw new Error(
+			`HUB_POLL is set but no wired neighbor can be consumed. Wired: ${drawn}. A queue must be ` +
+				`wired FROM this workload for the generator to emit it — see CONTRACT.md section 8.1.`
+		);
+	}
+
+	const wanted = want.trim().toUpperCase();
+	const named = candidates.filter((n) => n.label.toUpperCase() === wanted);
+	if (named.length === 1) return named[0] as Neighbor;
+	if (candidates.length === 1) return candidates[0] as Neighbor;
+
+	const labels = candidates.map((n) => `${n.type}/${n.label}`).join(', ');
+	throw new Error(`HUB_POLL=${want} does not name exactly one source; candidates: ${labels}`);
+}
+
+/**
+ * One poll, one fan-out, one acknowledgement.
+ *
+ * The source is excluded from its own fan-out. Without that, a queue wired outward is both the
+ * input and a destination: every message read is written straight back, and the only thing
+ * stopping it is the hop budget running out a few rounds later.
+ */
+export async function consumeOnce(
+	source: Neighbor,
+	targets: readonly Neighbor[],
+	ctx: Ctx,
+	opts: { readonly hops?: number } = {}
+): Promise<Report | null> {
+	const consume = registry.get(source.type)?.consume;
+	if (!consume) throw new Error(`resource ${source.type} cannot be consumed`);
+
+	const batch = await consume(source, ctx);
+	if (batch.items.length === 0) return null;
+
+	const report = await handle(batch, targets, ctx, opts.hops === undefined ? {} : { hops: opts.hops });
+
+	// Only what was forwarded. An item that ran out of hops is not in `failed` and is acknowledged
+	// on purpose: redelivering it would drop it again, forever.
+	const failed = new Set(report.failed);
+	const delivered = batch.items.filter((item) => item.id === undefined || !failed.has(item.id));
+	if (delivered.length > 0) await batch.ack(delivered);
+
+	return report;
 }
 
 async function readBody(req: IncomingMessage, limit: number): Promise<string> {
@@ -242,6 +317,24 @@ export function container(opts: ContainerOptions = {}): Server {
 
 	let neighbors: readonly Neighbor[] | undefined;
 
+	// Resolved on first use rather than at module load, so a shim that registers resources after
+	// calling container() still sees a complete vocabulary.
+	const wired = (): readonly Neighbor[] => (neighbors ??= discover(env, registry.vocabulary()));
+
+	const context = (): Ctx => ({
+		// The generator writes NAME for every node it injects variables into, and on ECS it carries
+		// the container's own logical name rather than the task's — which is the name the report
+		// should show, because the container is what ran.
+		self: env['NAME'] ?? env['HOSTNAME'] ?? 'hub',
+		fetch: fetchImpl,
+		// REGION and ACCOUNT are written unconditionally by the generator, so unlike the Lambda
+		// runtime there is no account to recover from an invocation ARN. When they are absent the
+		// senders refuse with a reason naming the wire, which is the right failure.
+		region: (n) => n?.props['REGION'] ?? env['REGION'] ?? env['AWS_REGION'],
+		account: (n) => n?.props['ACCOUNT'] ?? env['ACCOUNT'],
+		now: () => new Date(),
+	});
+
 	const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
 		if (req.method === 'GET' || req.method === 'HEAD') {
 			respond(res, 200, { ok: true, self: env['NAME'] ?? null });
@@ -253,32 +346,14 @@ export function container(opts: ContainerOptions = {}): Server {
 			return;
 		}
 
-		// Resolved on first request rather than at module load, so a shim that registers resources
-		// after calling container() still sees a complete vocabulary.
-		neighbors ??= discover(env, registry.vocabulary());
-
 		const body = await readBody(req, opts.maxBodyBytes ?? MAX_BODY_BYTES);
 		await ensureCredentials(env, fetchImpl);
-
-		const ctx: Ctx = {
-			// The generator writes NAME for every node it injects variables into, and on ECS it
-			// carries the container's own logical name rather than the task's — which is the name
-			// the report should show, because the container is what ran.
-			self: env['NAME'] ?? env['HOSTNAME'] ?? 'hub',
-			fetch: fetchImpl,
-			// REGION and ACCOUNT are written unconditionally by the generator, so unlike the Lambda
-			// runtime there is no account to recover from an invocation ARN. When they are absent
-			// the senders refuse with a reason naming the wire, which is the right failure.
-			region: (n) => n?.props['REGION'] ?? env['REGION'] ?? env['AWS_REGION'],
-			account: (n) => n?.props['ACCOUNT'] ?? env['ACCOUNT'],
-			now: () => new Date(),
-		};
 
 		const arrival = await normalize(body);
 		const report = await handle(
 			arrival,
-			neighbors,
-			ctx,
+			wired(),
+			context(),
 			opts.hops === undefined ? {} : { hops: opts.hops }
 		);
 
@@ -307,10 +382,62 @@ export function container(opts: ContainerOptions = {}): Server {
 	// minutes with nothing in its log to say why.
 	server.listen(opts.port ?? Number(env['PORT'] ?? 8080), '0.0.0.0');
 
+	let stopping = false;
+
+	const want = opts.poll === undefined ? env['HUB_POLL'] : opts.poll;
+	const polling: Promise<void> = want
+		? loop(String(want)).catch((err: unknown) => {
+				// Told to consume and unable to. Exiting is louder than serving HTTP while the queue
+				// quietly fills — which is exactly the silent failure this package exists to remove.
+				console.error(
+					JSON.stringify({ hub: 'poll setup failed', error: err instanceof Error ? err.message : String(err) })
+				);
+				process.exitCode = 1;
+				server.close(() => process.exit(1));
+			})
+		: Promise.resolve();
+
+	async function loop(want: string): Promise<void> {
+		const source = selectSource(wired(), want);
+		// Everything except the source. See consumeOnce: a queue wired outward is a destination too,
+		// and forwarding to it what was just read from it is the workload eating its own messages.
+		const targets = wired().filter((n) => n !== source);
+
+		console.log(
+			JSON.stringify({ hub: 'polling', source: `${source.type}/${source.label}`, targets: targets.length })
+		);
+
+		while (!stopping) {
+			try {
+				await ensureCredentials(env, fetchImpl);
+				const report = await consumeOnce(
+					source,
+					targets,
+					context(),
+					opts.hops === undefined ? {} : { hops: opts.hops }
+				);
+				if (report) console.log(JSON.stringify({ hub: report }));
+			} catch (err) {
+				// Never fatal. A queue that is briefly unreachable, or a credential rotation that
+				// failed once, must not end a task that ECS would then restart from nothing — and a
+				// tight retry loop against a failing endpoint costs money to accomplish nothing.
+				console.error(JSON.stringify({ hub: 'poll failed', error: err instanceof Error ? err.message : String(err) }));
+				await new Promise((resolve) => setTimeout(resolve, POLL_BACKOFF_MS));
+			}
+		}
+	}
+
 	// ECS sends SIGTERM and kills the container after StopTimeout, 30 seconds by default. Without
-	// this, every deployment severs the requests in flight.
+	// this, every deployment severs the requests in flight — and ends the poll loop between reading
+	// a batch and acknowledging it, which is a redelivery rather than a loss, but a redelivery
+	// nobody asked for.
 	const stop = (): void => {
-		server.close(() => process.exit(0));
+		stopping = true;
+		server.close(() => {
+			// The in-flight receive is not cancelled, so this waits out the long poll — at most
+			// WaitTimeSeconds, which fits inside the default StopTimeout with room to spare.
+			void polling.finally(() => process.exit(0));
+		});
 	};
 	process.once('SIGTERM', stop);
 	process.once('SIGINT', stop);

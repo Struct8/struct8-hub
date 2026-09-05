@@ -108,8 +108,8 @@ function register(mod) {
   if (!mod.type || !/^[a-z][a-z0-9_]*$/.test(mod.type)) {
     throw new Error(`hub: invalid resource type ${JSON.stringify(mod.type)} (expected lowercase catalog type)`);
   }
-  if (!mod.send && !mod.receive) {
-    throw new Error(`hub: resource ${mod.type} declares neither send nor receive; it could be discovered but never reached`);
+  if (!mod.send && !mod.receive && !mod.consume) {
+    throw new Error(`hub: resource ${mod.type} declares neither send nor receive nor consume; it could be discovered but never reached`);
   }
   const existing = modules.get(mod.type);
   if (existing && existing !== mod) {
@@ -1133,25 +1133,33 @@ register({
 });
 
 // dist/resources/aws_sqs_queue/index.js
+var BATCH = 10;
+var WAIT_SECONDS = 20;
+function queueUrl(n, ctx, region) {
+  const given = n.props["QUEUE_URL"] ?? n.props["URL"];
+  if (given)
+    return given;
+  const name = n.props["NAME"];
+  const account = ctx.account(n);
+  if (!name)
+    throw new Error("no queue name and no queue URL on the wire");
+  if (!account)
+    throw new Error(`no account for queue ${name}, and none for the workload`);
+  return `https://sqs.${region}.amazonaws.com/${account}/${name}`;
+}
+function regionFor(n, ctx) {
+  const region = ctx.region(n);
+  if (!region)
+    throw new Error("no region for the queue and none for the workload");
+  return region;
+}
 register({
   type: "aws_sqs_queue",
   keys: ["QUEUE_URL"],
   capabilities: ["queue"],
   async send(n, envelope, ctx) {
-    const region = ctx.region(n);
-    if (!region)
-      throw new Error("no region for the queue and none for the workload");
-    let url = n.props["QUEUE_URL"] ?? n.props["URL"];
-    if (!url) {
-      const name = n.props["NAME"];
-      const account = ctx.account(n);
-      if (!name)
-        throw new Error("no queue name and no queue URL on the wire");
-      if (!account)
-        throw new Error(`no account for queue ${name}, and none for the workload`);
-      url = `https://sqs.${region}.amazonaws.com/${account}/${name}`;
-    }
-    await json("sqs", region, "AmazonSQS.SendMessage", { QueueUrl: url, MessageBody: seal(envelope) }, ctx.fetch);
+    const region = regionFor(n, ctx);
+    await json("sqs", region, "AmazonSQS.SendMessage", { QueueUrl: queueUrl(n, ctx, region), MessageBody: seal(envelope) }, ctx.fetch);
   },
   receive(raw) {
     const records = raw?.Records;
@@ -1165,6 +1173,40 @@ register({
       body: r.body ?? ""
     }));
     return { origin: "aws:sqs", describe: `SQS ${queue} (${items.length} record(s))`, items };
+  },
+  /**
+   * Reads the queue directly, for a runtime AWS does not poll on its behalf.
+   *
+   * This is the same work the Lambda event source mapping does invisibly. Nothing here is new
+   * behaviour — it is the half of the queue that Lambda hid.
+   */
+  async consume(n, ctx) {
+    const region = regionFor(n, ctx);
+    const url = queueUrl(n, ctx, region);
+    const answer = await json("sqs", region, "AmazonSQS.ReceiveMessage", { QueueUrl: url, MaxNumberOfMessages: BATCH, WaitTimeSeconds: WAIT_SECONDS }, ctx.fetch);
+    const handles = /* @__PURE__ */ new Map();
+    const items = [];
+    for (const message of answer?.Messages ?? []) {
+      if (message.MessageId === void 0 || message.ReceiptHandle === void 0)
+        continue;
+      handles.set(message.MessageId, message.ReceiptHandle);
+      items.push({ id: message.MessageId, body: message.Body ?? "" });
+    }
+    const name = n.props["NAME"] ?? url.split("/").pop() ?? "?";
+    return {
+      origin: "aws:sqs",
+      describe: `SQS ${name} (${items.length} message(s), polled)`,
+      items,
+      async ack(delivered) {
+        const entries = delivered.map((item) => {
+          const handle2 = item.id === void 0 ? void 0 : handles.get(item.id);
+          return handle2 === void 0 ? void 0 : { Id: item.id, ReceiptHandle: handle2 };
+        }).filter((entry) => entry !== void 0);
+        if (entries.length === 0)
+          return;
+        await json("sqs", region, "AmazonSQS.DeleteMessageBatch", { QueueUrl: url, Entries: entries }, ctx.fetch);
+      }
+    };
   }
 });
 

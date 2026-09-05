@@ -35,7 +35,7 @@ contra uma conta real. Nada aqui foi aplicado a partir de um diagrama.
 | Recursos AWS | pronto: 18 módulos, 14 destinos de envio, 12 fontes de evento ([cobertura](docs/coverage.md)) |
 | Runtime da AWS Lambda | pronto, invocado de ponta a ponta contra uma conta real |
 | Pacote implantável | pronto: `node scripts/bundle.mjs` produz um zip de 44 KiB |
-| Runtime de contêiner (ECS) | entrada HTTP e credencial da task role prontas; consumir fila depende da descoberta pelo lado de origem ([lacuna](CONTRACT.md#known-gaps)) |
+| Runtime de contêiner (ECS) | pronto: entrada HTTP, credencial da task role e consumo de SQS por trás do `HUB_POLL` ([por que uma variável](CONTRACT.md#known-gaps)) |
 | Runtime do Cloudflare Workers | planejado |
 
 **Já existe um arquivo pronto no repositório: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — um
@@ -98,9 +98,23 @@ um health check que disparasse o fan-out acionaria o diagrama inteiro duas vezes
 cobraria por cada salto. A porta padrão é 8080 e precisa bater com o `containerPort` e com a do
 target group.
 
-**Ele ainda não consome fila**, e isso não é falta de trabalho: ler uma fila exige saber *qual*
-fila, e o gerador só emite os fios que saem de um nó ([a lacuna](CONTRACT.md#known-gaps)). Consumir
-justamente aquilo para onde o próprio workload envia seria ele comendo as próprias mensagens.
+**Consumir uma fila** custa uma variável, e ela é provisória por um motivo. O gerador só emite os
+fios que *saem* de um nó, então uma fila desenhada apontando para este workload não produz nada a
+descobrir ([a lacuna](CONTRACT.md#known-gaps)). Desenhe ao contrário — da caixa do ECS para a fila
+— e nomeie o rótulo desse fio:
+
+```
+HUB_POLL=in
+```
+
+A permissão já está certa: a política que um fio de fila gera concede `ReceiveMessage` e
+`DeleteMessage` junto com o `SendMessage`. Errada está a seta, e o `HUB_POLL` é o que diz qual dos
+dois sentidos possíveis este fio carrega. A origem fica de fora do próprio fan-out, então nenhuma
+mensagem é devolvida à fila de onde veio, e só as que foram realmente encaminhadas são apagadas.
+Quando o gerador passar a emitir o lado de origem, a variável deixa de ser necessária.
+
+Stream não é consumível, de propósito. Shard, iterador, checkpoint e coordenação de posse entre
+tarefas são outro trabalho, e fazê-lo mal produz silêncio ou reprocessamento — não erro.
 
 ## Como funciona
 

@@ -43,6 +43,17 @@ AWS account.
   than 5xx, so a correctly reported failure is not read by the load balancer as a broken task.
   Verified by running the built artifact against a simulated credential endpoint: AWS rejected the
   fake key, which is the proof that the fetched credentials reached the signer.
+- Queue consumption for runtimes AWS does not poll on their behalf: a `consume` port on
+  `ResourceModule`, implemented by `aws_sqs_queue`, and a poll loop in the container runtime. The
+  receipt handle never leaves the resource module — `ack` is a closure the module builds, because
+  the handle is not the message id and nothing else has any use for it. Only the items whose
+  fan-out succeeded are deleted; an item that ran out of hops *is* deleted, since redelivering it
+  would drop it again forever.
+- `HUB_POLL`, naming which wired neighbor to read. It exists because the contract has no incoming
+  side: the wire that makes a queue discoverable is drawn outward, so its direction cannot say
+  whether it is an input or a destination. The source is excluded from its own fan-out — without
+  that, every message read is written straight back, and only the hop budget stops it. The variable
+  is a stopgap and CONTRACT.md §8.1 says why it is still wrong.
 - README and getting-started guide in English and Brazilian Portuguese.
 
 ### Fixed

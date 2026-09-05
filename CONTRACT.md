@@ -157,8 +157,16 @@ source mapping, an S3 notification, an API Gateway integration. The function is 
 had to know who called it.
 
 A container or a virtual machine has no such platform. It must poll — and nothing in the
-environment tells it what to poll. **This is why the container runtime cannot be built against
-contract v1.** Closing it means emitting the source side as well, which is a generator change.
+environment tells it what to poll. Closing this properly means emitting the source side as well,
+which is a generator change.
+
+**The container runtime works around it, and the workaround is worth understanding as evidence of
+the cost.** A queue wired *outward* is emitted, and the policy that wire generates already grants
+`ReceiveMessage` and `DeleteMessage` alongside `SendMessage` — so the capability is present and
+only the meaning is missing. `HUB_POLL` names which wire to read instead of write. That works, and
+it is still wrong in the place that matters: the arrow on the diagram points away from the workload
+while the data flows towards it, so the drawing says the opposite of what runs. A contract whose
+consumers have to be told which direction a wire really means has not described the wire.
 
 Even where the workload does not need it to run, it needs it to *report*: saying "this wire exists
 and was never exercised" requires knowing the wire exists.

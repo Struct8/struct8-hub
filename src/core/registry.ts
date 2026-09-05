@@ -26,8 +26,8 @@ export function register(mod: ResourceModule): void {
 	if (!mod.type || !/^[a-z][a-z0-9_]*$/.test(mod.type)) {
 		throw new Error(`hub: invalid resource type ${JSON.stringify(mod.type)} (expected lowercase catalog type)`);
 	}
-	if (!mod.send && !mod.receive) {
-		throw new Error(`hub: resource ${mod.type} declares neither send nor receive; it could be discovered but never reached`);
+	if (!mod.send && !mod.receive && !mod.consume) {
+		throw new Error(`hub: resource ${mod.type} declares neither send nor receive nor consume; it could be discovered but never reached`);
 	}
 
 	const existing = modules.get(mod.type);
@@ -44,6 +44,9 @@ export const all = (): ResourceModule[] => [...modules.values()];
 
 /** Every registered resource that can normalize an incoming event. */
 export const receivers = (): ResourceModule[] => all().filter((m) => m.receive);
+
+/** Every registered resource a runtime without a platform poller can read on demand. */
+export const consumers = (): ResourceModule[] => all().filter((m) => m.consume);
 
 /** The vocabulary the parser matches against, assembled from what is registered. */
 export function vocabulary(): Vocabulary {

@@ -12,9 +12,16 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 
-import { container, taskCredentials, resetCredentialCache } from '../dist/runtimes/container.js';
+import {
+	container,
+	taskCredentials,
+	resetCredentialCache,
+	selectSource,
+	consumeOnce,
+} from '../dist/runtimes/container.js';
 import * as registry from '../dist/core/registry.js';
-import type { Envelope, Neighbor } from '../dist/core/types.js';
+import { open, seal } from '../dist/core/envelope.js';
+import type { Ctx, Envelope, Item, Neighbor } from '../dist/core/types.js';
 
 const running: Server[] = [];
 const touched: string[] = [];
@@ -256,4 +263,145 @@ test('a method that is neither the health check nor the work is refused', async 
 	const res = await fetch(base, { method: 'DELETE' });
 
 	assert.equal(res.status, 405);
+});
+
+// ---------------------------------------------------------------------------
+// Consuming
+// ---------------------------------------------------------------------------
+
+const CTX: Ctx = {
+	self: 'Worker',
+	fetch: globalThis.fetch,
+	region: () => 'us-east-1',
+	account: () => '111122223333',
+	now: () => new Date(0),
+};
+
+const wire = (type: string, label: string, name: string): Neighbor => ({
+	type,
+	label,
+	props: { NAME: name },
+});
+
+/**
+ * A source that is also a destination — which is not a contrived pairing but the only shape the
+ * contract can express today: the wire that makes a queue discoverable is a wire drawn outward.
+ */
+function consumable(type: string, items: Item[]) {
+	const acked: Item[][] = [];
+	const sent: Envelope[] = [];
+	registry.register({
+		type,
+		async send(_n: Neighbor, e: Envelope) {
+			sent.push(e);
+		},
+		async consume() {
+			return {
+				origin: 'fake:poll',
+				describe: `${type} (${items.length})`,
+				items,
+				async ack(delivered: readonly Item[]) {
+					acked.push([...delivered]);
+				},
+			};
+		},
+	});
+	return { acked, sent };
+}
+
+test('the only consumable neighbor is the source, whatever the value says', () => {
+	consumable('aws_sqs_queue', []);
+	spy('aws_dynamodb_table');
+
+	const source = selectSource([wire('aws_dynamodb_table', '0', 'T'), wire('aws_sqs_queue', '0', 'Q')], 'anything');
+
+	assert.equal(source.type, 'aws_sqs_queue');
+});
+
+test('the label picks the source when more than one could be consumed', () => {
+	consumable('aws_sqs_queue', []);
+
+	const source = selectSource(
+		[wire('aws_sqs_queue', 'IN', 'inbound'), wire('aws_sqs_queue', 'RETRY', 'retries')],
+		'retry'
+	);
+
+	assert.equal(source.props['NAME'], 'retries');
+});
+
+test('an ambiguous choice is refused rather than guessed', () => {
+	consumable('aws_sqs_queue', []);
+
+	assert.throws(
+		() => selectSource([wire('aws_sqs_queue', 'IN', 'a'), wire('aws_sqs_queue', 'RETRY', 'b')], 'neither'),
+		// Picking the first would look exactly like success until someone noticed the other queue
+		// never emptied.
+		/does not name exactly one source.*IN.*RETRY/s
+	);
+});
+
+test('nothing to consume points at the contract gap, not at a typo', () => {
+	spy('aws_dynamodb_table');
+
+	assert.throws(
+		() => selectSource([wire('aws_dynamodb_table', '0', 'T')], 'x'),
+		/wired FROM this workload.*8\.1/s
+	);
+});
+
+test('the source is not a destination of what it produced', async () => {
+	const queue = consumable('aws_sqs_queue', [{ id: 'm-1', body: 'hello' }]);
+	const table = spy('aws_dynamodb_table');
+
+	const source = wire('aws_sqs_queue', '0', 'Q');
+	const target = wire('aws_dynamodb_table', '0', 'T');
+
+	const report = await consumeOnce(source, [target], CTX);
+
+	assert.equal(table.length, 1, 'the real destination did not receive it');
+	// The wire exists and carries a sender; forwarding to it here would write every message read
+	// straight back onto the queue that produced it.
+	assert.equal(queue.sent.length, 0, 'the message was written back to its own source');
+	assert.equal(report?.hops.length, 1);
+});
+
+test('only what was forwarded is acknowledged', async () => {
+	const queue = consumable('aws_sqs_queue', [
+		{ id: 'm-1', body: 'good' },
+		{ id: 'm-2', body: 'bad' },
+	]);
+	registry.register({
+		type: 'aws_dynamodb_table',
+		async send(_n: Neighbor, e: Envelope) {
+			if (e.body === 'bad') throw new Error('ValidationException: item too large');
+		},
+	});
+
+	await consumeOnce(wire('aws_sqs_queue', '0', 'Q'), [wire('aws_dynamodb_table', '0', 'T')], CTX);
+
+	// Deleting m-2 would lose it in silence; leaving it costs a redelivery once the visibility
+	// timeout expires, which is the recoverable half of the two.
+	assert.deepEqual(queue.acked, [[{ id: 'm-1', body: 'good' }]]);
+});
+
+test('an item that ran out of hops is acknowledged, because redelivering it drops it again', async () => {
+	const spent = seal(open('looping', 'Upstream', { hops: 0 }));
+	const queue = consumable('aws_sqs_queue', [{ id: 'm-1', body: spent }]);
+	const table = spy('aws_dynamodb_table');
+
+	const report = await consumeOnce(wire('aws_sqs_queue', '0', 'Q'), [wire('aws_dynamodb_table', '0', 'T')], CTX);
+
+	assert.equal(report?.dropped, 1);
+	assert.equal(table.length, 0);
+	assert.deepEqual(queue.acked, [[{ id: 'm-1', body: spent }]]);
+});
+
+test('an empty poll acknowledges nothing and reports nothing', async () => {
+	const queue = consumable('aws_sqs_queue', []);
+	spy('aws_dynamodb_table');
+
+	const report = await consumeOnce(wire('aws_sqs_queue', '0', 'Q'), [wire('aws_dynamodb_table', '0', 'T')], CTX);
+
+	assert.equal(report, null);
+	assert.deepEqual(queue.acked, []);
 });
