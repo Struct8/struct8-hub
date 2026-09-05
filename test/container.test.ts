@@ -329,6 +329,19 @@ test('the label picks the source when more than one could be consumed', () => {
 	assert.equal(source.props['NAME'], 'retries');
 });
 
+test('the queue name picks the source too, since that is what a person reaches for', () => {
+	// A wire drawn without text has the label `0`, and HUB_POLL=0 reads as *off* to anyone who
+	// meets it. The queue's own name is the value people actually write.
+	consumable('aws_sqs_queue', []);
+
+	const source = selectSource(
+		[wire('aws_sqs_queue', '0', 'hub-in'), wire('aws_sqs_queue', '1', 'hub-retry')],
+		'hub-in'
+	);
+
+	assert.equal(source.label, '0');
+});
+
 test('an ambiguous choice is refused rather than guessed', () => {
 	consumable('aws_sqs_queue', []);
 

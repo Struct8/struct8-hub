@@ -207,9 +207,12 @@ export interface ContainerOptions {
  * generator emits source-side variables, the direction is no longer guesswork and this goes away.
  * Until then, naming the input by hand is honest about which of the two meanings a wire carries.
  *
- * The value matches a wire's label when it names one, and is otherwise ignored in favour of the
- * single consumable neighbor. Ambiguity is refused rather than resolved by picking the first —
- * consuming the wrong queue looks exactly like consuming the right one that happens to be empty.
+ * The value matches the queue's name, its type, or the wire's label — whichever the person setting
+ * it reached for. A wire with no text has the label `0`, and `HUB_POLL=0` reads as *off* to every
+ * human being who meets it, so matching only the label would make the honest value the misleading
+ * one. When the value names none of the three and there is a single consumable neighbor, that one
+ * is used; ambiguity is refused rather than settled by picking the first, because consuming the
+ * wrong queue looks exactly like consuming the right one while it happens to be empty.
  */
 export function selectSource(neighbors: readonly Neighbor[], want: string): Neighbor {
 	const candidates = neighbors.filter((n) => registry.get(n.type)?.consume);
@@ -223,12 +226,14 @@ export function selectSource(neighbors: readonly Neighbor[], want: string): Neig
 	}
 
 	const wanted = want.trim().toUpperCase();
-	const named = candidates.filter((n) => n.label.toUpperCase() === wanted);
-	if (named.length === 1) return named[0] as Neighbor;
-	if (candidates.length === 1) return candidates[0] as Neighbor;
+	const names = (n: Neighbor) => [n.label, n.type, n.props['NAME'] ?? ''].map((s) => s.toUpperCase());
 
-	const labels = candidates.map((n) => `${n.type}/${n.label}`).join(', ');
-	throw new Error(`HUB_POLL=${want} does not name exactly one source; candidates: ${labels}`);
+	const named = candidates.filter((n) => names(n).includes(wanted));
+	if (named.length === 1) return named[0] as Neighbor;
+	if (named.length === 0 && candidates.length === 1) return candidates[0] as Neighbor;
+
+	const listed = candidates.map((n) => `${n.type}/${n.label}`).join(', ');
+	throw new Error(`HUB_POLL=${want} does not name exactly one source; candidates: ${listed}`);
 }
 
 /**
