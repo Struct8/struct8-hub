@@ -34,6 +34,15 @@ AWS account.
 - Live protocol probe (`scripts/probe-aws.mjs`), read-only, covering all eleven service/protocol
   pairs. 168 tests offline.
 - AWS Lambda runtime.
+- Container runtime for ECS (`src/runtimes/container.ts`), plus `docker/Dockerfile` and a
+  `--runtime container` mode in the bundler. Two things differ from Lambda and nothing else does:
+  work arrives over HTTP, and the task role is fetched from the container credential endpoint and
+  refreshed ahead of expiry — reading it once at startup produces a container that works all
+  morning and starts failing after lunch. `GET` is the health check and never forwards, because a
+  target group calls it every thirty seconds. A failed hop answers 200 carrying the report rather
+  than 5xx, so a correctly reported failure is not read by the load balancer as a broken task.
+  Verified by running the built artifact against a simulated credential endpoint: AWS rejected the
+  fake key, which is the proof that the fetched credentials reached the signer.
 - README and getting-started guide in English and Brazilian Portuguese.
 
 ### Fixed

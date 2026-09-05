@@ -46,12 +46,16 @@ if (unknown.length) {
 	process.exit(1);
 }
 
+// A function exports a handler and waits to be called; a server starts itself. That is the only
+// place the difference between the two runtimes shows up in the artifact.
+const start = runtime === 'lambda' ? `export const handler = ${runtime}();` : `${runtime}();`;
+
 // The shim. This is exactly what the generator will emit into a function, and it is deliberately
 // short enough to read: two imports and a handler.
 const shim = `import { ${runtime} } from './dist/runtimes/${runtime}.js';
 ${chosen.map((t) => `import './dist/resources/${t}/index.js';`).join('\n')}
 
-export const handler = ${runtime}();
+${start}
 `;
 
 const entry = join(root, '.bundle-entry.mjs');
@@ -91,7 +95,7 @@ try {
 	console.log(`  resources  ${chosen.length}/${available.length}: ${chosen.join(', ')}`);
 	console.log(`  runtime    ${runtime}`);
 	console.log(`  code       ${(code.length / 1024).toFixed(1)} KiB`);
-	console.log(`  handler    index.handler`);
+	console.log(runtime === 'lambda' ? `  handler    index.handler` : `  entry      node index.mjs`);
 } finally {
 	rmSync(entry, { force: true });
 }

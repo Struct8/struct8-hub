@@ -31,11 +31,11 @@ contra uma conta real. Nada aqui foi aplicado a partir de um diagrama.
 | peça | estado |
 |---|---|
 | [Contrato de fiação](CONTRACT.md) v1 | documentado, corresponde ao que o gerador emite hoje |
-| Núcleo (`discovery`, `envelope`, `registry`, `report`) | pronto, 161 testes |
+| Núcleo (`discovery`, `envelope`, `registry`, `report`) | pronto, 28 testes (181 na suíte) |
 | Recursos AWS | pronto: 18 módulos, 14 destinos de envio, 12 fontes de evento ([cobertura](docs/coverage.md)) |
 | Runtime da AWS Lambda | pronto, invocado de ponta a ponta contra uma conta real |
 | Pacote implantável | pronto: `node scripts/bundle.mjs` produz um zip de 44 KiB |
-| Runtime de contêiner / VM | depende da descoberta pelo lado de origem — ver [CONTRACT.md](CONTRACT.md#known-gaps) |
+| Runtime de contêiner (ECS) | entrada HTTP e credencial da task role prontas; consumir fila depende da descoberta pelo lado de origem ([lacuna](CONTRACT.md#known-gaps)) |
 | Runtime do Cloudflare Workers | planejado |
 
 **Já existe um arquivo pronto no repositório: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — um
@@ -77,6 +77,30 @@ manter, nem código para escrever. O Hub lê os fios do próprio ambiente e rela
 qual alvo, quanto tempo, e o motivo quando algum falha.
 
 Detalhes, e como construir um arquivo menor, em [prebuilt/README.md](prebuilt/README.md).
+
+## Rodar no ECS
+
+É o mesmo código, a um parâmetro de build de distância. Função é chamada; processo precisa estar
+alcançável, então o contêiner atende HTTP — e lê a task role no endpoint de credencial do ECS,
+renovando antes de vencer, porque o ECS não deixa credencial no ambiente como a Lambda deixa.
+
+```
+node scripts/bundle.mjs --runtime container --raw --out build/index.mjs
+docker build -f docker/Dockerfile -t struct8-hub .
+```
+
+Ligue a caixa do ECS no que ela deve alcançar, ponha um balanceador na frente e mande um `POST`
+para a task. **O relatório volta na resposta**, em vez de ir para o CloudWatch — é o jeito mais
+rápido de ver se o diagrama está ligado como foi desenhado.
+
+O `GET` é o health check e nunca encaminha: o target group bate nele a cada trinta segundos, então
+um health check que disparasse o fan-out acionaria o diagrama inteiro duas vezes por minuto e
+cobraria por cada salto. A porta padrão é 8080 e precisa bater com o `containerPort` e com a do
+target group.
+
+**Ele ainda não consome fila**, e isso não é falta de trabalho: ler uma fila exige saber *qual*
+fila, e o gerador só emite os fios que saem de um nó ([a lacuna](CONTRACT.md#known-gaps)). Consumir
+justamente aquilo para onde o próprio workload envia seria ele comendo as próprias mensagens.
 
 ## Como funciona
 

@@ -17,6 +17,11 @@ import * as registry from './core/registry.js';
 import { lambda } from './runtimes/lambda.js';
 import type { Neighbor } from './core/types.js';
 
+// The container runtime is deliberately NOT re-exported here. It imports `node:http` and
+// `node:fs`, and this barrel is what a Cloudflare Worker would load — pulling those in makes the
+// entry point unloadable there without `nodejs_compat`, for a runtime that platform cannot use
+// anyway. It has a subpath of its own: `@struct8/hub/runtimes/container`.
+
 /** Rebuilds the neighbor list from an environment-shaped object. */
 export const fromEnv = (source: unknown, vocab: Vocabulary = registry.vocabulary()): Neighbor[] =>
 	discover(source, vocab);

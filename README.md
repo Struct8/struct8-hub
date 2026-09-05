@@ -30,11 +30,11 @@ against a live account. Nothing here has been applied from a diagram.
 | piece | state |
 |---|---|
 | [Wiring contract](CONTRACT.md) v1 | documented, matches what the generator emits today |
-| Core (`discovery`, `envelope`, `registry`, `report`) | done, 161 tests |
+| Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (181 in the suite) |
 | AWS resources | done: 18 modules, 14 send targets, 12 event sources ([coverage](docs/coverage.md)) |
 | AWS Lambda runtime | done, invoked end to end against a live account |
 | Deployable bundle | done: `node scripts/bundle.mjs` produces a 44 KiB zip |
-| Container / VM runtime | needs source-side discovery — see [CONTRACT.md](CONTRACT.md#known-gaps) |
+| Container runtime (ECS) | HTTP in and task-role credentials done; consuming a queue needs source-side discovery ([gap](CONTRACT.md#known-gaps)) |
 | Cloudflare Workers runtime | planned |
 
 **A built file is in the repository: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — one file,
@@ -74,6 +74,30 @@ no code to write. Hub reads the wires out of its own environment and reports wha
 which target, how long, and the reason when one fails.
 
 Details, and how to build a smaller file, in [prebuilt/README.md](prebuilt/README.md).
+
+## Run it on ECS
+
+The same code, one build flag apart. A function is invoked; a process has to be reachable, so the
+container answers HTTP — and it reads the task role from the ECS credential endpoint, refreshing it
+before it expires, because ECS does not put credentials in the environment the way Lambda does.
+
+```
+node scripts/bundle.mjs --runtime container --raw --out build/index.mjs
+docker build -f docker/Dockerfile -t struct8-hub .
+```
+
+Wire the ECS box to whatever it should reach, put a load balancer in front of it, and `POST`
+anything to the task. **The report comes back in the response** instead of going to CloudWatch,
+which is the fastest way to see whether a diagram is wired the way it was drawn.
+
+`GET` is the health check and never forwards — a target group calls it every thirty seconds, so a
+health check that fanned out would fire the whole diagram twice a minute and bill for every hop.
+The port defaults to 8080 and must match both `containerPort` and the target group.
+
+**It does not consume queues yet**, and that is not an omission of effort: reading a queue means
+knowing *which* queue, and the generator emits only the wires that leave a node
+([the gap](CONTRACT.md#known-gaps)). Polling whatever the workload also sends to would be a
+workload consuming its own messages.
 
 ## How it works
 
