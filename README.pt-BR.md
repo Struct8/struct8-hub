@@ -120,6 +120,27 @@ Quando o gerador passar a emitir o lado de origem, a variável deixa de ser nece
 Stream não é consumível, de propósito. Shard, iterador, checkpoint e coordenação de posse entre
 tarefas são outro trabalho, e fazê-lo mal produz silêncio ou reprocessamento — não erro.
 
+## Endpoint de teste de carga (educacional, desligado por padrão)
+
+Para os templates de autoscaling do Struct8 há uma segunda rota no runtime de container cujo único
+trabalho é gastar CPU sob demanda, para que uma política de escala possa ser observada reagindo a
+uma carga que o gerador controla com precisão:
+
+```
+HUB_LOADTEST=on
+POST /loadtest?ms=200
+```
+
+Ela queima cerca de `ms` milissegundos de CPU (com teto de 10 s) e responde quanto tempo de fato
+levou. Fica **desligada a menos que `HUB_LOADTEST` esteja setado** — um endpoint que queima CPU sob
+demanda é um vetor de negação de serviço se responder por padrão numa conta que nunca pediu por
+ele, então, enquanto está desligado, o caminho é um 404, como se não existisse.
+
+Ela está de propósito fora do contrato de fiação: não descobre vizinho, não faz fan-out, não toca
+no relatório. Vive num caminho próprio, então o health check `GET` e o fan-out `POST /` se comportam
+exatamente igual, ligada ou não. Aponte o k6 para `POST /loadtest?ms=...` através do load balancer,
+e o ASG escala pela CPU que cada requisição custa — um custo que você define.
+
 ## Como funciona
 
 **Descoberta.** O gerador injeta uma variável de ambiente por fio, nomeada com o tipo do alvo, o

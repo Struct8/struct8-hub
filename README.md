@@ -118,6 +118,27 @@ Streams are deliberately not consumable. Shards, iterators, checkpoints and leas
 between tasks are a different job, and doing it badly produces silence or reprocessing rather than
 an error.
 
+## Load-test endpoint (educational, off by default)
+
+For the Struct8 autoscaling templates there is a second route on the container runtime whose only
+job is to spend CPU on demand, so a scaling policy can be watched reacting to load a generator
+controls precisely:
+
+```
+HUB_LOADTEST=on
+POST /loadtest?ms=200
+```
+
+It burns about `ms` milliseconds of CPU (capped at 10 s) and answers with how long it actually
+took. It is **off unless `HUB_LOADTEST` is set** — an endpoint that burns CPU on demand is a
+denial-of-service vector if it answers by default in an account that never asked for it, so while
+it is off the path is a 404, as if it did not exist.
+
+It is deliberately not part of the wiring contract: it discovers no neighbor, fans out to nothing,
+and touches no report. It lives on its own path, so the `GET` health check and the `POST /`
+fan-out behave exactly the same whether it is on or off. Point k6 at `POST /loadtest?ms=...`
+through the load balancer, and the ASG scales on the CPU each request costs — a cost you set.
+
 ## How it works
 
 **Discovery.** The generator injects one environment variable per wire, named after the target's
