@@ -617,6 +617,23 @@ var REFRESH_MARGIN_MS = 5 * 6e4;
 var ASSUMED_LIFETIME_MS = 15 * 6e4;
 var MAX_BODY_BYTES = 1024 * 1024;
 var POLL_BACKOFF_MS = 5e3;
+var LOADTEST_PATH = "/loadtest";
+var LOADTEST_MAX_MS = 1e4;
+var LOADTEST_DEFAULT_MS = 100;
+function loadtestEnabled(env) {
+  const v = (env["HUB_LOADTEST"] ?? "").trim().toLowerCase();
+  return v === "on" || v === "true" || v === "1" || v === "yes";
+}
+function burnCpu(ms) {
+  const target = Math.min(Math.max(ms, 0), LOADTEST_MAX_MS);
+  const started = Date.now();
+  let x = 0;
+  while (Date.now() - started < target) {
+    x = (x * 1103515245 + 12345) % 2147483647;
+  }
+  void x;
+  return Date.now() - started;
+}
 var environment = () => typeof process === "undefined" ? {} : process.env;
 async function taskCredentials(opts = {}) {
   const env = opts.env ?? environment();
@@ -750,6 +767,22 @@ function container(opts = {}) {
     now: () => /* @__PURE__ */ new Date()
   });
   const route = async (req, res) => {
+    const path = new URL(req.url ?? "/", "http://local").pathname;
+    if (path === LOADTEST_PATH) {
+      if (!loadtestEnabled(env)) {
+        respond(res, 404, { error: "not found" });
+        return;
+      }
+      if (req.method !== "POST") {
+        respond(res, 405, { error: `${req.method ?? "method"} not allowed; use POST` });
+        return;
+      }
+      const requested = Number(new URL(req.url ?? "/", "http://local").searchParams.get("ms"));
+      const ms = Number.isFinite(requested) ? requested : LOADTEST_DEFAULT_MS;
+      const burned = burnCpu(ms);
+      respond(res, 200, { loadtest: true, requestedMs: Number.isFinite(requested) ? requested : null, burnedMs: burned });
+      return;
+    }
     if (req.method === "GET" || req.method === "HEAD") {
       respond(res, 200, { ok: true, self: env["NAME"] ?? null });
       return;

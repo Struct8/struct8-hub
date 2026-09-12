@@ -51,6 +51,53 @@ const MAX_BODY_BYTES = 1024 * 1024;
 /** How long to wait after a failed poll, so a failing endpoint is not retried in a tight loop. */
 const POLL_BACKOFF_MS = 5_000;
 
+/**
+ * Load-test endpoint (educational, off by default).
+ *
+ * `POST /loadtest?ms=N` spends about N milliseconds of CPU and returns. It exists for one purpose:
+ * to give a Struct8 autoscaling template a target whose CPU cost per request is a knob, so a
+ * scaling policy can be watched reacting to load that the k6 generator controls precisely.
+ *
+ * It is deliberately kept apart from everything the Hub is for. It never discovers a neighbour,
+ * never fans out, never touches the report — it is not part of the wiring contract. And it is
+ * OFF unless `HUB_LOADTEST` is set to an on-ish value: an endpoint that burns CPU on demand is a
+ * denial-of-service vector if it answers by default in an account it did not mean to. The path is
+ * distinct from `/` so the fan-out endpoint and the health check are untouched whether it is on
+ * or off.
+ */
+const LOADTEST_PATH = '/loadtest';
+
+/** Cap on a single burn, so one request cannot pin a core indefinitely. `ms` above this is clamped. */
+const LOADTEST_MAX_MS = 10_000;
+
+/** Default burn when `?ms=` is absent or unparseable. */
+const LOADTEST_DEFAULT_MS = 100;
+
+/** Reads whether the load-test endpoint is enabled. Anything but an explicit on-ish value is off. */
+function loadtestEnabled(env: Env): boolean {
+	const v = (env['HUB_LOADTEST'] ?? '').trim().toLowerCase();
+	return v === 'on' || v === 'true' || v === '1' || v === 'yes';
+}
+
+/**
+ * Spends CPU for about `ms` milliseconds, then returns how long it actually took.
+ *
+ * The loop hashes so the work cannot be optimised away, and checks the clock every iteration so a
+ * clamp of `LOADTEST_MAX_MS` is honoured even under a huge request. This is intentionally busy —
+ * burning a core is the point — which is why it only ever runs behind the opt-in above.
+ */
+function burnCpu(ms: number): number {
+	const target = Math.min(Math.max(ms, 0), LOADTEST_MAX_MS);
+	const started = Date.now();
+	let x = 0;
+	while (Date.now() - started < target) {
+		// A little arithmetic per iteration so the loop is not elided; the modulo keeps it bounded.
+		x = (x * 1_103_515_245 + 12_345) % 2_147_483_647;
+	}
+	void x;
+	return Date.now() - started;
+}
+
 type Env = Record<string, string | undefined>;
 
 const environment = (): Env => (typeof process === 'undefined' ? {} : (process.env as Env));
@@ -341,6 +388,29 @@ export function container(opts: ContainerOptions = {}): Server {
 	});
 
 	const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+		// The path decides only the load-test endpoint. Every other path keeps the original
+		// method-based behaviour, so `/` and any other route still answer health on GET and fan
+		// out on POST exactly as before.
+		const path = new URL(req.url ?? '/', 'http://local').pathname;
+
+		if (path === LOADTEST_PATH) {
+			// Off unless explicitly enabled. A disabled endpoint is 404, not 405: to anyone probing,
+			// it simply does not exist, which is the right posture for a CPU-burn route.
+			if (!loadtestEnabled(env)) {
+				respond(res, 404, { error: 'not found' });
+				return;
+			}
+			if (req.method !== 'POST') {
+				respond(res, 405, { error: `${req.method ?? 'method'} not allowed; use POST` });
+				return;
+			}
+			const requested = Number(new URL(req.url ?? '/', 'http://local').searchParams.get('ms'));
+			const ms = Number.isFinite(requested) ? requested : LOADTEST_DEFAULT_MS;
+			const burned = burnCpu(ms);
+			respond(res, 200, { loadtest: true, requestedMs: Number.isFinite(requested) ? requested : null, burnedMs: burned });
+			return;
+		}
+
 		if (req.method === 'GET' || req.method === 'HEAD') {
 			respond(res, 200, { ok: true, self: env['NAME'] ?? null });
 			return;

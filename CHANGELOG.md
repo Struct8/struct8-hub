@@ -63,6 +63,14 @@ AWS account.
   that, every message read is written straight back, and only the hop budget stops it. The variable
   is a stopgap and CONTRACT.md §8.1 says why it is still wrong.
 - README and getting-started guide in English and Brazilian Portuguese.
+- Load-test endpoint on the container runtime (`POST /loadtest?ms=N`), off by default and enabled
+  only with `HUB_LOADTEST`. It spends about `N` milliseconds of CPU (clamped to 10 s) and returns
+  how long it took. It exists for the educational autoscaling templates: a target whose CPU cost
+  per request is a knob, so a scaling policy can be watched reacting to load the generator
+  controls precisely. It is deliberately outside the wiring contract — it discovers nothing, fans
+  out to nothing, and touches no report — and it lives on its own path, so `GET` health and the
+  `POST /` fan-out are unchanged whether it is on or off. Off is a 404, not a 405: to anyone
+  probing, a CPU-burn route that was never asked for simply does not exist.
 
 ### Fixed
 

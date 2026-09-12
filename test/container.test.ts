@@ -266,6 +266,64 @@ test('a method that is neither the health check nor the work is refused', async 
 });
 
 // ---------------------------------------------------------------------------
+// Load-test endpoint (educational, opt-in)
+// ---------------------------------------------------------------------------
+
+test('the load-test endpoint does not exist unless it is turned on', async () => {
+	// No HUB_LOADTEST. A CPU-burn route that answered by default would be a denial-of-service
+	// vector in an account that never asked for it, so absent means 404, not 405.
+	withEnv({ NAME: 'Worker' });
+
+	const base = await start();
+	const res = await fetch(`${base}/loadtest`, { method: 'POST' });
+
+	assert.equal(res.status, 404);
+});
+
+test('when enabled, the load-test endpoint burns CPU and reports how long', async () => {
+	withEnv({ NAME: 'Worker', HUB_LOADTEST: 'on' });
+
+	const base = await start();
+	const res = await fetch(`${base}/loadtest?ms=60`, { method: 'POST' });
+	const body = (await res.json()) as { loadtest: boolean; requestedMs: number; burnedMs: number };
+
+	assert.equal(res.status, 200);
+	assert.equal(body.loadtest, true);
+	assert.equal(body.requestedMs, 60);
+	// It really spent time, and roughly the amount asked for (a lower bound is enough; the machine
+	// running the test decides the upper one).
+	assert.ok(body.burnedMs >= 55, `burned ${body.burnedMs}ms, expected around 60`);
+});
+
+test('the load-test endpoint refuses a non-POST even when enabled', async () => {
+	withEnv({ NAME: 'Worker', HUB_LOADTEST: 'on' });
+
+	const base = await start();
+	const res = await fetch(`${base}/loadtest`, { method: 'GET' });
+
+	assert.equal(res.status, 405);
+});
+
+test('turning the load-test endpoint on leaves health and fan-out untouched', async () => {
+	// The endpoint lives on its own path; the contract paths must behave exactly as they did.
+	withEnv({ AWS_SQS_QUEUE_NAME_0: 'orders', NAME: 'Worker', REGION: 'us-east-1', ACCOUNT: '111122223333', HUB_LOADTEST: 'on' });
+	const queue = spy('aws_sqs_queue');
+
+	const base = await start();
+
+	const health = await fetch(`${base}/`);
+	assert.equal(health.status, 200);
+	assert.deepEqual(await health.json(), { ok: true, self: 'Worker' });
+	assert.equal(queue.length, 0, 'the health check fanned out');
+
+	const work = await fetch(base, { method: 'POST', body: 'hello' });
+	const report = (await work.json()) as { hops: { ok: boolean }[] };
+	assert.equal(work.status, 200);
+	assert.equal(report.hops.length, 1);
+	assert.equal(queue.length, 1, 'the fan-out did not reach the queue');
+});
+
+// ---------------------------------------------------------------------------
 // Consuming
 // ---------------------------------------------------------------------------
 
