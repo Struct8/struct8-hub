@@ -74,6 +74,23 @@ AWS account.
 
 ### Fixed
 
+- Behind an API Gateway REST proxy integration, every request answered `502 Internal server
+  error`. The Lambda runtime returned the report on its own, and a payload-format-1.0 proxy
+  integration refuses any answer without `statusCode`. Nothing on the function's side showed it —
+  the invocation succeeded, the report printed, the duration was normal — so the symptom read as a
+  broken deployment rather than as a missing field. An arrival from `aws:apigateway` or
+  `aws:lambda_url` now comes back as `{ statusCode, headers, body }` with the report serialized
+  into the body. Reported from a live deployment, not caught by the suite, which had no test for
+  the Lambda runtime's return value at all; `test/lambda.test.ts` now covers it.
+
+  The status is **200 even when a wire failed**, which is the answer the container runtime already
+  gives: the report is the result, and `hops[].ok` carries the per-wire truth. A 502 is also what
+  the gateway itself returns when the integration is wrong, so spending it on a reported failure
+  would make a working Hub with one bad destination read exactly like a Hub that was deployed
+  wrong. Note for anyone revisiting this: `report.failed` cannot carry the signal, because it only
+  takes items that have an `id` and an HTTP arrival has none — a status derived from it answers
+  200 always.
+
 - The queue and topic senders composed a target URL and ARN with an empty segment when the wire
   carried no `NAME`, and sent to it. Both were valid strings, so nothing complained locally; the
   answer from AWS would have been an error about a resource that does not exist, a long way from

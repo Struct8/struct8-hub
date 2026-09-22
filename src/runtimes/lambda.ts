@@ -19,6 +19,44 @@ export interface LambdaContext {
 /** Sources that deliver a batch and accept a partial-failure report. */
 const BATCHED = new Set(['aws:sqs', 'aws:kinesis', 'aws:dynamodb']);
 
+/**
+ * Sources that invoke through a proxy integration and expect an HTTP response object back.
+ *
+ * API Gateway REST is the strict one. A payload-format-1.0 proxy integration whose function
+ * returns anything without `statusCode` is answered to the caller as `502 Internal server error`,
+ * and nothing on the Lambda side says so: the report is printed, the invocation succeeds, the
+ * duration is normal. The whole failure lives on the gateway, which is why it reads as a broken
+ * deployment rather than as a missing field.
+ *
+ * A function URL and an HTTP API (payload 2.0) infer a response instead of refusing one, so those
+ * two worked already. They are listed here anyway — three ways in that answer one shape is a
+ * smaller thing to hold than two that answer by accident and one that had to be fixed.
+ */
+const HTTP_PROXY = new Set(['aws:apigateway', 'aws:lambda_url']);
+
+/**
+ * The proxy-integration response.
+ *
+ * **200 even when a wire failed**, which is the answer `runtimes/container.ts` already gives to
+ * the same question: the report *is* the result, a failed hop is a fact it carries rather than a
+ * transport error, and `hops[].ok` names the wire and the reason. Here there is a second reason on
+ * top of that one. A 502 is exactly what the gateway returns when the integration is misconfigured
+ * — the symptom this change removes — so spending the same code on a reported wire failure would
+ * make a working Hub with one bad destination indistinguishable from a Hub that was deployed
+ * wrong.
+ *
+ * ⚠️ `report.failed` cannot carry a status here, and reading as though it could is the trap.
+ * `Trail.record` adds to that list only when the item has an `id`, and an `id` exists solely for
+ * sources that accept a partial-batch report — a queue or a stream. An HTTP arrival carries no id,
+ * so `failed` is empty however many hops failed. A status derived from it answers 200 always,
+ * which looks like the feature working and hides the one thing this package exists to show.
+ */
+const proxyResponse = (report: Report) => ({
+	statusCode: 200,
+	headers: { 'content-type': 'application/json' },
+	body: JSON.stringify(report),
+});
+
 const env = (name: string): string | undefined =>
 	typeof process === 'undefined' ? undefined : (process.env as Record<string, string | undefined>)[name];
 
@@ -77,6 +115,13 @@ export function lambda(opts: LambdaOptions = {}) {
 		// The batch contract is not optional. An absent list makes the source treat every message
 		// as failed and redeliver the lot; on a stream the checkpoint rewinds to the lowest
 		// sequence number reported and everything after it comes back too.
-		return BATCHED.has(arrival.origin) ? ack(report) : (report satisfies Report);
+		if (BATCHED.has(arrival.origin)) return ack(report);
+
+		// A proxy integration wants an HTTP response, not the report on its own.
+		if (HTTP_PROXY.has(arrival.origin)) return proxyResponse(report);
+
+		// Direct invocation, and anything else that reads the answer as a value: the report
+		// unwrapped, which is what a caller doing `Payload` on an Invoke expects to parse.
+		return report satisfies Report;
 	};
 }

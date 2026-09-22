@@ -234,6 +234,12 @@ var ack = (report) => ({
 
 // dist/runtimes/lambda.js
 var BATCHED = /* @__PURE__ */ new Set(["aws:sqs", "aws:kinesis", "aws:dynamodb"]);
+var HTTP_PROXY = /* @__PURE__ */ new Set(["aws:apigateway", "aws:lambda_url"]);
+var proxyResponse = (report) => ({
+  statusCode: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(report)
+});
 var env = (name) => typeof process === "undefined" ? void 0 : process.env[name];
 var accountFrom = (context) => env("ACCOUNT") ?? context.invokedFunctionArn?.split(":")[4] ?? void 0;
 function lambda(opts = {}) {
@@ -253,7 +259,11 @@ function lambda(opts = {}) {
     const arrival = await normalize(event);
     const report = await handle(arrival, neighbors, ctx, opts.hops === void 0 ? {} : { hops: opts.hops });
     console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
-    return BATCHED.has(arrival.origin) ? ack(report) : report;
+    if (BATCHED.has(arrival.origin))
+      return ack(report);
+    if (HTTP_PROXY.has(arrival.origin))
+      return proxyResponse(report);
+    return report;
   };
 }
 
