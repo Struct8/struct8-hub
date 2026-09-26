@@ -57,9 +57,35 @@ var displayName = (n) => n.props["NAME"] ?? n.props["ARN"] ?? n.props["URL"] ?? 
 var MARKER = "$hub";
 var VERSION = 1;
 var DEFAULT_HOPS = 3;
+var hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+var traceId = (at = /* @__PURE__ */ new Date()) => `1-${Math.floor(at.getTime() / 1e3).toString(16).padStart(8, "0")}-${hex(12)}`;
+var isTraceId = (value) => /^1-[0-9a-f]{8}-[0-9a-f]{24}$/.test(value);
+var spanId = () => hex(8);
+function parseTraceHeader(raw) {
+  if (!raw)
+    return null;
+  const fields = /* @__PURE__ */ new Map();
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0)
+      fields.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+  }
+  const root = fields.get("Root");
+  if (!root || !isTraceId(root))
+    return null;
+  const parent = fields.get("Parent");
+  return {
+    root,
+    ...parent ? { parent } : {},
+    // Absent means undecided, and the safe reading of undecided is "not recording". A default of
+    // true would start billing X-Ray on every deployment that never asked for it.
+    sampled: fields.get("Sampled") === "1"
+  };
+}
+var traceHeader = (trace) => `Root=${trace.root}${trace.parent ? `;Parent=${trace.parent}` : ""};Sampled=${trace.sampled ? "1" : "0"}`;
 function open(body, self, opts = {}) {
   return {
-    trace: opts.trace ?? crypto.randomUUID(),
+    trace: opts.trace ?? traceId(),
     hops: opts.hops ?? DEFAULT_HOPS,
     path: [self],
     at: opts.at ?? (/* @__PURE__ */ new Date()).toISOString(),
@@ -181,6 +207,7 @@ var Trail = class {
       label: neighbor.label,
       ok,
       ms: this.now() - started,
+      at: started,
       ...err === void 0 ? {} : { err }
     });
   }
@@ -194,6 +221,49 @@ var Trail = class {
     };
   }
 };
+var seconds = (ms) => ms / 1e3;
+function subsegment(hop, trace) {
+  return {
+    id: spanId(),
+    name: hop.to,
+    start_time: seconds(hop.at),
+    end_time: seconds(hop.at + hop.ms),
+    namespace: "remote",
+    trace_id: trace.root,
+    // The wire, so a red node in the console can be found in the drawing. `label` is the text on
+    // the arrow and `n` its position in the fan-out; both are how the report already reads.
+    annotations: { wire: hop.label, resource_type: hop.type, hop: hop.n },
+    ...hop.ok ? {} : {
+      error: true,
+      cause: {
+        exceptions: [{ id: spanId(), type: "DeliveryFailed", message: hop.err ?? "delivery failed" }]
+      }
+    }
+  };
+}
+function segments(report, trace, self) {
+  if (!trace.sampled || report.hops.length === 0)
+    return [];
+  if (trace.parent && !trace.opens) {
+    return report.hops.map((hop) => JSON.stringify({ ...subsegment(hop, trace), type: "subsegment", parent_id: trace.parent }));
+  }
+  const starts = report.hops.map((hop) => hop.at);
+  const ends = report.hops.map((hop) => hop.at + hop.ms);
+  return [
+    JSON.stringify({
+      // The id the runtime already handed downstream, when it had one. Minting a fresh one here
+      // would leave the next workload parented to a segment that was never written.
+      id: trace.parent ?? spanId(),
+      name: self,
+      trace_id: trace.root,
+      start_time: seconds(Math.min(...starts)),
+      end_time: seconds(Math.max(...ends)),
+      annotations: { origin: report.origin, dropped: report.dropped },
+      ...report.hops.some((hop) => !hop.ok) ? { error: true } : {},
+      subsegments: report.hops.map((hop) => subsegment(hop, trace))
+    })
+  ];
+}
 
 // dist/core/hub.js
 async function normalize(raw) {
@@ -207,7 +277,7 @@ async function normalize(raw) {
 }
 async function handle(arrival, neighbors, ctx, opts = {}) {
   const chains = arrival.items.map((item) => read(item.body));
-  const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? crypto.randomUUID();
+  const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? traceId();
   const trail = new Trail(trace, arrival.origin, opts.now);
   const reachable = neighbors.filter((n) => get(n.type)?.send);
   for (const [index, item] of arrival.items.entries()) {
@@ -231,41 +301,6 @@ async function handle(arrival, neighbors, ctx, opts = {}) {
 var ack = (report) => ({
   batchItemFailures: report.failed.map((itemIdentifier) => ({ itemIdentifier }))
 });
-
-// dist/runtimes/lambda.js
-var BATCHED = /* @__PURE__ */ new Set(["aws:sqs", "aws:kinesis", "aws:dynamodb"]);
-var HTTP_PROXY = /* @__PURE__ */ new Set(["aws:apigateway", "aws:lambda_url"]);
-var proxyResponse = (report) => ({
-  statusCode: 200,
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify(report)
-});
-var env = (name) => typeof process === "undefined" ? void 0 : process.env[name];
-var accountFrom = (context) => env("ACCOUNT") ?? context.invokedFunctionArn?.split(":")[4] ?? void 0;
-function lambda(opts = {}) {
-  let neighbors;
-  return async function handler2(event, context = {}) {
-    neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
-    const self = env("LAMBDA_NAME") ?? env("NAME") ?? env("AWS_LAMBDA_FUNCTION_NAME") ?? context.functionName ?? "hub";
-    const ownRegion = env("REGION") ?? env("AWS_REGION");
-    const ownAccount = accountFrom(context);
-    const ctx = {
-      self,
-      fetch: globalThis.fetch,
-      region: (n) => n?.props["REGION"] ?? ownRegion,
-      account: (n) => n?.props["ACCOUNT"] ?? ownAccount,
-      now: () => /* @__PURE__ */ new Date()
-    };
-    const arrival = await normalize(event);
-    const report = await handle(arrival, neighbors, ctx, opts.hops === void 0 ? {} : { hops: opts.hops });
-    console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
-    if (BATCHED.has(arrival.origin))
-      return ack(report);
-    if (HTTP_PROXY.has(arrival.origin))
-      return proxyResponse(report);
-    return report;
-  };
-}
 
 // node_modules/aws4fetch/dist/aws4fetch.esm.mjs
 var encoder = new TextEncoder();
@@ -565,6 +600,10 @@ function signer() {
   });
   return client;
 }
+var outgoingTrace;
+function setTraceHeader(header) {
+  outgoingTrace = header;
+}
 var endpoint = (service, region) => `https://${service}.${region}.amazonaws.com`;
 async function fail(res, what) {
   const body = await res.text().catch(() => "");
@@ -587,7 +626,10 @@ async function fail(res, what) {
   throw new Error(`HTTP ${res.status} on ${what}`);
 }
 async function send(url, service, region, init, what, fetchImpl) {
-  const signed = await signer().sign(url, { ...init, aws: { service, region } });
+  const headers = new Headers(init.headers);
+  if (outgoingTrace)
+    headers.set("x-amzn-trace-id", outgoingTrace);
+  const signed = await signer().sign(url, { ...init, headers, aws: { service, region } });
   const res = await fetchImpl(signed);
   if (!res.ok)
     await fail(res, what);
@@ -641,6 +683,88 @@ var unb64 = (encoded) => {
   const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
   return new TextDecoder().decode(bytes);
 };
+var SEGMENT_BATCH = 50;
+async function putTraceSegments(region, documents, fetchImpl = fetch) {
+  const unprocessed = [];
+  for (let i = 0; i < documents.length; i += SEGMENT_BATCH) {
+    const res = await rest(`${endpoint("xray", region)}/TraceSegments`, "xray", region, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ TraceSegmentDocuments: documents.slice(i, i + SEGMENT_BATCH) })
+    }, "PutTraceSegments", fetchImpl);
+    const answer = await res.json().catch(() => null);
+    for (const bad of answer?.UnprocessedTraceSegments ?? []) {
+      unprocessed.push(`${bad.ErrorCode ?? "rejected"}: ${bad.Message ?? bad.Id ?? "no reason given"}`);
+    }
+  }
+  return unprocessed;
+}
+async function emitTrace(report, trace, self, region, fetchImpl = fetch) {
+  if (!trace || !region)
+    return;
+  const documents = segments(report, trace, self);
+  if (documents.length === 0)
+    return;
+  try {
+    const unprocessed = await putTraceSegments(region, documents, fetchImpl);
+    if (unprocessed.length > 0) {
+      console.error(JSON.stringify({ hub: "trace rejected", trace: trace.root, reasons: unprocessed }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({
+      hub: "trace not sent",
+      trace: trace.root,
+      error: err instanceof Error ? err.message : String(err)
+    }));
+  }
+}
+
+// dist/runtimes/lambda.js
+var BATCHED = /* @__PURE__ */ new Set(["aws:sqs", "aws:kinesis", "aws:dynamodb"]);
+var HTTP_PROXY = /* @__PURE__ */ new Set(["aws:apigateway", "aws:lambda_url"]);
+var proxyResponse = (report) => ({
+  statusCode: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(report)
+});
+var env = (name) => typeof process === "undefined" ? void 0 : process.env[name];
+var accountFrom = (context) => env("ACCOUNT") ?? context.invokedFunctionArn?.split(":")[4] ?? void 0;
+function lambda(opts = {}) {
+  let neighbors;
+  return async function handler2(event, context = {}) {
+    neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
+    const self = env("LAMBDA_NAME") ?? env("NAME") ?? env("AWS_LAMBDA_FUNCTION_NAME") ?? context.functionName ?? "hub";
+    const ownRegion = env("REGION") ?? env("AWS_REGION");
+    const ownAccount = accountFrom(context);
+    const trace = parseTraceHeader(env("_X_AMZN_TRACE_ID"));
+    setTraceHeader(trace?.sampled ? traceHeader(trace) : void 0);
+    const ctx = {
+      self,
+      fetch: globalThis.fetch,
+      region: (n) => n?.props["REGION"] ?? ownRegion,
+      account: (n) => n?.props["ACCOUNT"] ?? ownAccount,
+      now: () => /* @__PURE__ */ new Date(),
+      // Only when it is actually being recorded. Senders read this to stamp the trace onto what
+      // they send, and stamping an unrecorded one would add a field to every message of every
+      // deployment that never asked for tracing — for a trace nobody will look at.
+      ...trace?.sampled ? { trace } : {}
+    };
+    const arrival = await normalize(event);
+    const report = await handle(arrival, neighbors, ctx, {
+      ...opts.hops === void 0 ? {} : { hops: opts.hops },
+      // The platform's trace id wins over the envelope's, which is what `handle` documents. The
+      // invocation segment is already filed under this one.
+      ...trace === null ? {} : { trace: trace.root }
+    });
+    console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
+    await emitTrace(report, trace ?? void 0, self, ownRegion, globalThis.fetch);
+    if (BATCHED.has(arrival.origin))
+      return ack(report);
+    if (HTTP_PROXY.has(arrival.origin))
+      return proxyResponse(report);
+    return report;
+  };
+}
 
 // dist/resources/aws_api_gateway_rest_api/index.js
 register({
@@ -1176,7 +1300,20 @@ register({
   capabilities: ["queue"],
   async send(n, envelope, ctx) {
     const region = regionFor(n, ctx);
-    await json("sqs", region, "AmazonSQS.SendMessage", { QueueUrl: queueUrl(n, ctx, region), MessageBody: seal(envelope) }, ctx.fetch);
+    await json("sqs", region, "AmazonSQS.SendMessage", {
+      QueueUrl: queueUrl(n, ctx, region),
+      MessageBody: seal(envelope),
+      // A SYSTEM attribute, and the only one SQS defines. It is what a consumer inherits the
+      // trace from — a Lambda event source mapping reads it and opens its invocation under
+      // the same trace, which is the one hop no HTTP header can carry, because the sender and
+      // the consumer never speak to each other. Absent when nothing is being recorded, so a
+      // queue that is not traced is sent exactly the request it was sent before.
+      ...ctx.trace === void 0 ? {} : {
+        MessageSystemAttributes: {
+          AWSTraceHeader: { DataType: "String", StringValue: traceHeader(ctx.trace) }
+        }
+      }
+    }, ctx.fetch);
   },
   receive(raw) {
     const records = raw?.Records;

@@ -1,4 +1,4 @@
-import { seal } from '../../core/envelope.js';
+import { seal, traceHeader } from '../../core/envelope.js';
 import { register } from '../../core/registry.js';
 import * as aws from '../../providers/aws.js';
 import type { Arrival, Batch, Ctx, Item, Neighbor } from '../../core/types.js';
@@ -67,7 +67,22 @@ register({
 			'sqs',
 			region,
 			'AmazonSQS.SendMessage',
-			{ QueueUrl: queueUrl(n, ctx, region), MessageBody: seal(envelope) },
+			{
+				QueueUrl: queueUrl(n, ctx, region),
+				MessageBody: seal(envelope),
+				// A SYSTEM attribute, and the only one SQS defines. It is what a consumer inherits the
+				// trace from — a Lambda event source mapping reads it and opens its invocation under
+				// the same trace, which is the one hop no HTTP header can carry, because the sender and
+				// the consumer never speak to each other. Absent when nothing is being recorded, so a
+				// queue that is not traced is sent exactly the request it was sent before.
+				...(ctx.trace === undefined
+					? {}
+					: {
+							MessageSystemAttributes: {
+								AWSTraceHeader: { DataType: 'String', StringValue: traceHeader(ctx.trace) },
+							},
+						}),
+			},
 			ctx.fetch
 		);
 	},

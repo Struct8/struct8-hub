@@ -6,7 +6,7 @@
  * loop control, partial failure — be tested against fake senders in milliseconds.
  */
 
-import { advance, open, read, seal } from './envelope.js';
+import { advance, open, read, seal, traceId } from './envelope.js';
 import * as registry from './registry.js';
 import { Trail } from './report.js';
 import type { Arrival, Ctx, Envelope, Neighbor, Report } from './types.js';
@@ -53,7 +53,10 @@ export async function handle(
 	opts: HandleOptions = {}
 ): Promise<Report> {
 	const chains = arrival.items.map((item) => read(item.body));
-	const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? crypto.randomUUID();
+	// `opts.trace` outranks the envelope on purpose, and it is the runtime that passes it. On Lambda
+	// the platform has already opened a segment under its own trace id before this code runs; taking
+	// the envelope's id instead would file every hop under a trace the invocation is not in.
+	const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? traceId();
 
 	const trail = new Trail(trace, arrival.origin, opts.now);
 	const reachable = neighbors.filter((n) => registry.get(n.type)?.send);

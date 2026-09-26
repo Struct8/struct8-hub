@@ -17,6 +17,9 @@
 
 import { AwsClient } from 'aws4fetch';
 
+import { segments } from '../core/report.js';
+import type { Report, TraceContext } from '../core/types.js';
+
 export interface AwsCredentials {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
@@ -69,6 +72,33 @@ export function resetCredentials(): void {
 	client = undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Trace propagation
+// ---------------------------------------------------------------------------
+
+let outgoingTrace: string | undefined;
+
+/**
+ * The trace header to put on every signed request from here on.
+ *
+ * Module state, like the credentials above, and for the same reason: `send` below is reached from
+ * eighteen resource modules that pass a context they should not have to know carries telemetry.
+ * The runtime sets this once it knows which trace the run belongs to, and clears it otherwise.
+ *
+ * WHAT THIS BUYS, because it is not the same thing the queue's message attribute buys: the services
+ * that keep traces of their own — SNS, API Gateway, Step Functions, Lambda's invoke path — read the
+ * caller's trace off this HTTP header. Without it an SNS publish starts a new trace at the topic
+ * however carefully the message body was stamped, because the topic never opens the body.
+ */
+export function setTraceHeader(header: string | undefined): void {
+	outgoingTrace = header;
+}
+
+/** Test seam. Never call this from library or application code. */
+export function resetTraceHeader(): void {
+	outgoingTrace = undefined;
+}
+
 export const endpoint = (service: string, region: string): string =>
 	`https://${service}.${region}.amazonaws.com`;
 
@@ -101,7 +131,15 @@ async function fail(res: Response, what: string): Promise<never> {
 	throw new Error(`HTTP ${res.status} on ${what}`);
 }
 
-/** Signs and sends. Service and region are stated rather than inferred from the hostname. */
+/**
+ * Signs and sends. Service and region are stated rather than inferred from the hostname.
+ *
+ * The trace header goes on BEFORE signing, not onto the `Request` that comes back. A header added
+ * afterwards is outside the signature, and whether AWS tolerates that varies by service — so the
+ * one arrangement that cannot produce a sporadic `SignatureDoesNotMatch` is to let the signer see
+ * it. Nothing is added when no trace is being recorded, which keeps the signed set unchanged for
+ * every deployment that is not tracing.
+ */
 async function send(
 	url: string,
 	service: string,
@@ -110,7 +148,10 @@ async function send(
 	what: string,
 	fetchImpl: typeof fetch
 ): Promise<Response> {
-	const signed = await signer().sign(url, { ...init, aws: { service, region } });
+	const headers = new Headers(init.headers);
+	if (outgoingTrace) headers.set('x-amzn-trace-id', outgoingTrace);
+
+	const signed = await signer().sign(url, { ...init, headers, aws: { service, region } });
 	const res = await fetchImpl(signed);
 	if (!res.ok) await fail(res, what);
 	return res;
@@ -234,3 +275,97 @@ export const unb64 = (encoded: string): string => {
 	const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
 	return new TextDecoder().decode(bytes);
 };
+
+// ---------------------------------------------------------------------------
+// X-Ray
+// ---------------------------------------------------------------------------
+
+/**
+ * How many documents go up in one request.
+ *
+ * The API caps the request body, not the count, so a cap on the count is the cheap approximation:
+ * a fan-out wide enough to exceed it does not exist in a test diagram, and the chunking is here so
+ * that the day it does the segments still arrive.
+ */
+const SEGMENT_BATCH = 50;
+
+/**
+ * Ships segment documents.
+ *
+ * REST rather than JSON-RPC: X-Ray takes a path and a JSON body and has no `x-amz-target`, which is
+ * why it needs no entry in `JSON_DIALECT`.
+ */
+export async function putTraceSegments(
+	region: string,
+	documents: readonly string[],
+	fetchImpl: typeof fetch = fetch
+): Promise<string[]> {
+	const unprocessed: string[] = [];
+
+	for (let i = 0; i < documents.length; i += SEGMENT_BATCH) {
+		const res = await rest(
+			`${endpoint('xray', region)}/TraceSegments`,
+			'xray',
+			region,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ TraceSegmentDocuments: documents.slice(i, i + SEGMENT_BATCH) }),
+			},
+			'PutTraceSegments',
+			fetchImpl
+		);
+
+		// A rejected document does NOT fail the request. X-Ray answers 200 and lists what it threw
+		// away, so a malformed segment is invisible unless this list is read — the exact silent gap
+		// this package exists to close, reappearing in its own telemetry.
+		const answer = (await res.json().catch(() => null)) as {
+			UnprocessedTraceSegments?: { Id?: string; ErrorCode?: string; Message?: string }[];
+		} | null;
+
+		for (const bad of answer?.UnprocessedTraceSegments ?? []) {
+			unprocessed.push(`${bad.ErrorCode ?? 'rejected'}: ${bad.Message ?? bad.Id ?? 'no reason given'}`);
+		}
+	}
+
+	return unprocessed;
+}
+
+/**
+ * Sends the trail to X-Ray, and never lets that failure become the workload's failure.
+ *
+ * Telemetry is not the job. A queue message that was forwarded to five destinations has been
+ * forwarded whether or not the trace arrived, and throwing here would turn a successful fan-out
+ * into a retried one — duplicating real work to protect a record of it.
+ *
+ * The reason is logged rather than swallowed, because the failure that matters is the likely one:
+ * `AccessDenied` until the execution role carries `xray:PutTraceSegments`, which the diagram does
+ * not grant today.
+ */
+export async function emitTrace(
+	report: Report,
+	trace: TraceContext | undefined,
+	self: string,
+	region: string | undefined,
+	fetchImpl: typeof fetch = fetch
+): Promise<void> {
+	if (!trace || !region) return;
+
+	const documents = segments(report, trace, self);
+	if (documents.length === 0) return;
+
+	try {
+		const unprocessed = await putTraceSegments(region, documents, fetchImpl);
+		if (unprocessed.length > 0) {
+			console.error(JSON.stringify({ hub: 'trace rejected', trace: trace.root, reasons: unprocessed }));
+		}
+	} catch (err) {
+		console.error(
+			JSON.stringify({
+				hub: 'trace not sent',
+				trace: trace.root,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		);
+	}
+}

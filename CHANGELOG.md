@@ -71,6 +71,23 @@ AWS account.
   out to nothing, and touches no report — and it lives on its own path, so `GET` health and the
   `POST /` fan-out are unchanged whether it is on or off. Off is a 404, not a 405: to anyone
   probing, a CPU-burn route that was never asked for simply does not exist.
+- X-Ray tracing. The report already measured every hop; it now also goes up as segments, so the
+  console shows one trace across a chain instead of one per resource. Three parts, and each exists
+  because the other two cannot do its job: the correlation id in the envelope is minted in X-Ray's
+  trace format instead of as a UUID (a UUID correlates the logs perfectly and X-Ray rejects it), the
+  `X-Amzn-Trace-Id` header rides every signed request (which is what SNS, API Gateway and Step
+  Functions read — a topic never opens the message body), and SQS sends carry the trace in the
+  `AWSTraceHeader` message system attribute (the one hop no header reaches, because the sender and
+  the consumer never speak to each other). `Hop` gained `at`, the absolute start: a duration alone
+  cannot be placed on a timeline.
+  On Lambda there is no switch — `_X_AMZN_TRACE_ID` already carries the platform's decision, and
+  `Sampled=0` means nothing is sent and nothing signed changes. A container has no such signal, so
+  it takes `HUB_TRACE`; recording by default would begin charging X-Ray on every task that pulled a
+  new image. Subsegments hang off the invocation segment on Lambda and off a segment the run writes
+  itself in a container — writing one in both places shows the function twice, writing it in neither
+  is accepted by the API and never displayed. The execution or task role needs
+  `xray:PutTraceSegments` and `xray:PutTelemetryRecords`; without them the fan-out is unaffected and
+  the reason is logged, because telemetry failing is not the work failing.
 
 ### Fixed
 

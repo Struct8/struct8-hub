@@ -61,9 +61,13 @@ var displayName = (n) => n.props["NAME"] ?? n.props["ARN"] ?? n.props["URL"] ?? 
 var MARKER = "$hub";
 var VERSION = 1;
 var DEFAULT_HOPS = 3;
+var hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+var traceId = (at = /* @__PURE__ */ new Date()) => `1-${Math.floor(at.getTime() / 1e3).toString(16).padStart(8, "0")}-${hex(12)}`;
+var spanId = () => hex(8);
+var traceHeader = (trace) => `Root=${trace.root}${trace.parent ? `;Parent=${trace.parent}` : ""};Sampled=${trace.sampled ? "1" : "0"}`;
 function open(body, self, opts = {}) {
   return {
-    trace: opts.trace ?? crypto.randomUUID(),
+    trace: opts.trace ?? traceId(),
     hops: opts.hops ?? DEFAULT_HOPS,
     path: [self],
     at: opts.at ?? (/* @__PURE__ */ new Date()).toISOString(),
@@ -185,6 +189,7 @@ var Trail = class {
       label: neighbor.label,
       ok,
       ms: this.now() - started,
+      at: started,
       ...err === void 0 ? {} : { err }
     });
   }
@@ -198,6 +203,49 @@ var Trail = class {
     };
   }
 };
+var seconds = (ms) => ms / 1e3;
+function subsegment(hop, trace) {
+  return {
+    id: spanId(),
+    name: hop.to,
+    start_time: seconds(hop.at),
+    end_time: seconds(hop.at + hop.ms),
+    namespace: "remote",
+    trace_id: trace.root,
+    // The wire, so a red node in the console can be found in the drawing. `label` is the text on
+    // the arrow and `n` its position in the fan-out; both are how the report already reads.
+    annotations: { wire: hop.label, resource_type: hop.type, hop: hop.n },
+    ...hop.ok ? {} : {
+      error: true,
+      cause: {
+        exceptions: [{ id: spanId(), type: "DeliveryFailed", message: hop.err ?? "delivery failed" }]
+      }
+    }
+  };
+}
+function segments(report, trace, self) {
+  if (!trace.sampled || report.hops.length === 0)
+    return [];
+  if (trace.parent && !trace.opens) {
+    return report.hops.map((hop) => JSON.stringify({ ...subsegment(hop, trace), type: "subsegment", parent_id: trace.parent }));
+  }
+  const starts = report.hops.map((hop) => hop.at);
+  const ends = report.hops.map((hop) => hop.at + hop.ms);
+  return [
+    JSON.stringify({
+      // The id the runtime already handed downstream, when it had one. Minting a fresh one here
+      // would leave the next workload parented to a segment that was never written.
+      id: trace.parent ?? spanId(),
+      name: self,
+      trace_id: trace.root,
+      start_time: seconds(Math.min(...starts)),
+      end_time: seconds(Math.max(...ends)),
+      annotations: { origin: report.origin, dropped: report.dropped },
+      ...report.hops.some((hop) => !hop.ok) ? { error: true } : {},
+      subsegments: report.hops.map((hop) => subsegment(hop, trace))
+    })
+  ];
+}
 
 // dist/core/hub.js
 async function normalize(raw) {
@@ -211,7 +259,7 @@ async function normalize(raw) {
 }
 async function handle(arrival, neighbors, ctx, opts = {}) {
   const chains = arrival.items.map((item) => read(item.body));
-  const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? crypto.randomUUID();
+  const trace = opts.trace ?? chains.find((c) => c !== null)?.trace ?? traceId();
   const trail = new Trail(trace, arrival.origin, opts.now);
   const reachable = neighbors.filter((n) => get(n.type)?.send);
   for (const [index, item] of arrival.items.entries()) {
@@ -534,6 +582,10 @@ function signer() {
   });
   return client;
 }
+var outgoingTrace;
+function setTraceHeader(header) {
+  outgoingTrace = header;
+}
 var endpoint = (service, region) => `https://${service}.${region}.amazonaws.com`;
 async function fail(res, what) {
   const body = await res.text().catch(() => "");
@@ -556,7 +608,10 @@ async function fail(res, what) {
   throw new Error(`HTTP ${res.status} on ${what}`);
 }
 async function send(url, service, region, init, what, fetchImpl) {
-  const signed = await signer().sign(url, { ...init, aws: { service, region } });
+  const headers = new Headers(init.headers);
+  if (outgoingTrace)
+    headers.set("x-amzn-trace-id", outgoingTrace);
+  const signed = await signer().sign(url, { ...init, headers, aws: { service, region } });
   const res = await fetchImpl(signed);
   if (!res.ok)
     await fail(res, what);
@@ -610,6 +665,41 @@ var unb64 = (encoded) => {
   const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
   return new TextDecoder().decode(bytes);
 };
+var SEGMENT_BATCH = 50;
+async function putTraceSegments(region, documents, fetchImpl = fetch) {
+  const unprocessed = [];
+  for (let i = 0; i < documents.length; i += SEGMENT_BATCH) {
+    const res = await rest(`${endpoint("xray", region)}/TraceSegments`, "xray", region, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ TraceSegmentDocuments: documents.slice(i, i + SEGMENT_BATCH) })
+    }, "PutTraceSegments", fetchImpl);
+    const answer = await res.json().catch(() => null);
+    for (const bad of answer?.UnprocessedTraceSegments ?? []) {
+      unprocessed.push(`${bad.ErrorCode ?? "rejected"}: ${bad.Message ?? bad.Id ?? "no reason given"}`);
+    }
+  }
+  return unprocessed;
+}
+async function emitTrace(report, trace, self, region, fetchImpl = fetch) {
+  if (!trace || !region)
+    return;
+  const documents = segments(report, trace, self);
+  if (documents.length === 0)
+    return;
+  try {
+    const unprocessed = await putTraceSegments(region, documents, fetchImpl);
+    if (unprocessed.length > 0) {
+      console.error(JSON.stringify({ hub: "trace rejected", trace: trace.root, reasons: unprocessed }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({
+      hub: "trace not sent",
+      trace: trace.root,
+      error: err instanceof Error ? err.message : String(err)
+    }));
+  }
+}
 
 // dist/runtimes/container.js
 var CREDENTIAL_HOST = "http://169.254.170.2";
@@ -620,10 +710,12 @@ var POLL_BACKOFF_MS = 5e3;
 var LOADTEST_PATH = "/loadtest";
 var LOADTEST_MAX_MS = 1e4;
 var LOADTEST_DEFAULT_MS = 100;
-function loadtestEnabled(env) {
-  const v = (env["HUB_LOADTEST"] ?? "").trim().toLowerCase();
+var onish = (value) => {
+  const v = (value ?? "").trim().toLowerCase();
   return v === "on" || v === "true" || v === "1" || v === "yes";
-}
+};
+var loadtestEnabled = (env) => onish(env["HUB_LOADTEST"]);
+var tracingEnabled = (env) => onish(env["HUB_TRACE"]);
 function burnCpu(ms) {
   const target = Math.min(Math.max(ms, 0), LOADTEST_MAX_MS);
   const started = Date.now();
@@ -753,7 +845,9 @@ function container(opts = {}) {
   const fetchImpl = opts.fetch ?? globalThis.fetch;
   let neighbors;
   const wired = () => neighbors ??= discover(env, vocabulary());
-  const context = () => ({
+  const ownRegion = () => env["REGION"] ?? env["AWS_REGION"];
+  const newTrace = () => tracingEnabled(env) ? { root: traceId(), parent: spanId(), opens: true, sampled: true } : void 0;
+  const context = (trace) => ({
     // The generator writes NAME for every node it injects variables into, and on ECS it carries
     // the container's own logical name rather than the task's — which is the name the report
     // should show, because the container is what ran.
@@ -764,8 +858,16 @@ function container(opts = {}) {
     // senders refuse with a reason naming the wire, which is the right failure.
     region: (n) => n?.props["REGION"] ?? env["REGION"] ?? env["AWS_REGION"],
     account: (n) => n?.props["ACCOUNT"] ?? env["ACCOUNT"],
-    now: () => /* @__PURE__ */ new Date()
+    now: () => /* @__PURE__ */ new Date(),
+    ...trace === void 0 ? {} : { trace }
   });
+  const finish = async (report, trace) => {
+    try {
+      await emitTrace(report, trace, context(trace).self, ownRegion(), fetchImpl);
+    } finally {
+      setTraceHeader(void 0);
+    }
+  };
   const route = async (req, res) => {
     const path = new URL(req.url ?? "/", "http://local").pathname;
     if (path === LOADTEST_PATH) {
@@ -793,9 +895,18 @@ function container(opts = {}) {
     }
     const body = await readBody(req, opts.maxBodyBytes ?? MAX_BODY_BYTES);
     await ensureCredentials(env, fetchImpl);
+    const trace = newTrace();
+    if (trace)
+      setTraceHeader(traceHeader(trace));
     const arrival = await normalize(body);
-    const report = await handle(arrival, wired(), context(), opts.hops === void 0 ? {} : { hops: opts.hops });
+    let report;
+    try {
+      report = await handle(arrival, wired(), context(trace), opts.hops === void 0 ? {} : { hops: opts.hops });
+    } finally {
+      setTraceHeader(void 0);
+    }
     console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
+    await finish(report, trace);
     respond(res, 200, report);
   };
   const server = createServer((req, res) => {
@@ -824,9 +935,19 @@ function container(opts = {}) {
     while (!stopping) {
       try {
         await ensureCredentials(env, fetchImpl);
-        const report = await consumeOnce(source, targets, context(), opts.hops === void 0 ? {} : { hops: opts.hops });
-        if (report)
+        const trace = newTrace();
+        if (trace)
+          setTraceHeader(traceHeader(trace));
+        let report = null;
+        try {
+          report = await consumeOnce(source, targets, context(trace), opts.hops === void 0 ? {} : { hops: opts.hops });
+        } finally {
+          setTraceHeader(void 0);
+        }
+        if (report) {
           console.log(JSON.stringify({ hub: report }));
+          await finish(report, trace);
+        }
       } catch (err) {
         console.error(JSON.stringify({ hub: "poll failed", error: err instanceof Error ? err.message : String(err) }));
         await new Promise((resolve) => setTimeout(resolve, POLL_BACKOFF_MS));
@@ -1378,7 +1499,20 @@ register({
   capabilities: ["queue"],
   async send(n, envelope, ctx) {
     const region = regionFor(n, ctx);
-    await json("sqs", region, "AmazonSQS.SendMessage", { QueueUrl: queueUrl(n, ctx, region), MessageBody: seal(envelope) }, ctx.fetch);
+    await json("sqs", region, "AmazonSQS.SendMessage", {
+      QueueUrl: queueUrl(n, ctx, region),
+      MessageBody: seal(envelope),
+      // A SYSTEM attribute, and the only one SQS defines. It is what a consumer inherits the
+      // trace from — a Lambda event source mapping reads it and opens its invocation under
+      // the same trace, which is the one hop no HTTP header can carry, because the sender and
+      // the consumer never speak to each other. Absent when nothing is being recorded, so a
+      // queue that is not traced is sent exactly the request it was sent before.
+      ...ctx.trace === void 0 ? {} : {
+        MessageSystemAttributes: {
+          AWSTraceHeader: { DataType: "String", StringValue: traceHeader(ctx.trace) }
+        }
+      }
+    }, ctx.fetch);
   },
   receive(raw) {
     const records = raw?.Records;

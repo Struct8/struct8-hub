@@ -141,6 +141,44 @@ no relatório. Vive num caminho próprio, então o health check `GET` e o fan-ou
 exatamente igual, ligada ou não. Aponte o k6 para `POST /loadtest?ms=...` através do load balancer,
 e o ASG escala pela CPU que cada requisição custa — um custo que você define.
 
+## Rastreamento (X-Ray)
+
+O relatório pode ir para o X-Ray além do log. Cada hop vira um subsegmento — o nome do destino,
+quanto tempo levou e o motivo quando falhou — e o rastro segue para a carga seguinte, de modo que
+uma requisição que atravessa quatro recursos aparece no console como um rastro, não como quatro.
+
+**Na Lambda não há nada para ligar.** O runtime lê o `_X_AMZN_TRACE_ID`, que a AWS escreve em toda
+invocação, e obedece ao que ele diz: `Sampled=1` quando a invocação está sendo rastreada, `Sampled=0`
+quando não. Uma função sem rastreamento não envia segmento nenhum e assina exatamente as requisições
+que já assinava.
+
+**Em contêiner, use o `HUB_TRACE`.** O ECS não tem ajuste de rastreamento para consultar, e gravar
+por padrão passaria a cobrar X-Ray em toda task que baixasse uma imagem nova.
+
+```
+HUB_TRACE=on
+```
+
+**Permissão:** a execution role na Lambda, a task role no ECS, precisa de `xray:PutTraceSegments` e
+`xray:PutTelemetryRecords`. Sem elas o fan-out acontece do mesmo jeito e o log traz
+`trace not sent: AccessDenied` — telemetria falhar não é o trabalho falhar.
+
+**Importante:** regra de amostragem do X-Ray não vale aqui. Os segmentos sobem por
+`PutTraceSegments`, que grava o que recebe; a regra governa a decisão que um SDK cliente toma, e
+aqui não existe SDK cliente — o transporte é `fetch` assinado. Quem decide é o `Sampled` na Lambda e
+o `HUB_TRACE` no contêiner.
+
+Duas coisas levam o rastro adiante, e as duas são necessárias:
+
+| hop | o que leva |
+|---|---|
+| serviço que guarda rastro próprio — SNS, API Gateway, Step Functions, invoke de Lambda | o cabeçalho `X-Amzn-Trace-Id` na requisição assinada |
+| fila, para o que vier consumir depois | o atributo de sistema `AWSTraceHeader` do SQS |
+
+O segundo é o que nenhum cabeçalho resolve: quem envia e quem consome nunca conversam, então o
+rastro tem que viajar dentro da mensagem. O event source mapping lê esse atributo e abre a invocação
+do consumidor no mesmo rastro, e é isso que junta duas funções em uma.
+
 ## Como funciona
 
 **Descoberta.** O gerador injeta uma variável de ambiente por fio, nomeada com o tipo do alvo, o

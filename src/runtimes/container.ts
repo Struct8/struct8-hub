@@ -24,11 +24,12 @@ import { readFileSync } from 'node:fs';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
 import { discover } from '../core/discovery.js';
+import { spanId, traceHeader, traceId } from '../core/envelope.js';
 import { handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
-import { credentials } from '../providers/aws.js';
+import { credentials, emitTrace, setTraceHeader } from '../providers/aws.js';
 import type { AwsCredentials } from '../providers/aws.js';
-import type { Ctx, Neighbor, Report } from '../core/types.js';
+import type { Ctx, Neighbor, Report, TraceContext } from '../core/types.js';
 
 /** The link-local address ECS answers the credential request on. Fixed by AWS, not configurable. */
 const CREDENTIAL_HOST = 'http://169.254.170.2';
@@ -73,11 +74,25 @@ const LOADTEST_MAX_MS = 10_000;
 /** Default burn when `?ms=` is absent or unparseable. */
 const LOADTEST_DEFAULT_MS = 100;
 
-/** Reads whether the load-test endpoint is enabled. Anything but an explicit on-ish value is off. */
-function loadtestEnabled(env: Env): boolean {
-	const v = (env['HUB_LOADTEST'] ?? '').trim().toLowerCase();
+/** An explicit on-ish value. Anything else, absence included, is off. */
+const onish = (value: string | undefined): boolean => {
+	const v = (value ?? '').trim().toLowerCase();
 	return v === 'on' || v === 'true' || v === '1' || v === 'yes';
-}
+};
+
+/** Reads whether the load-test endpoint is enabled. Anything but an explicit on-ish value is off. */
+const loadtestEnabled = (env: Env): boolean => onish(env['HUB_LOADTEST']);
+
+/**
+ * Reads whether to record X-Ray traces.
+ *
+ * A FLAG HERE AND NONE ON LAMBDA, which is not an inconsistency. Lambda is told by the platform:
+ * `_X_AMZN_TRACE_ID` says `Sampled=0` until tracing is switched on for the function, so the
+ * decision already exists and reading it is enough. A container is told nothing — there is no task
+ * setting for tracing and nothing in the environment to consult — so recording by default would
+ * begin charging X-Ray on every task already running, the moment it pulled a new image.
+ */
+const tracingEnabled = (env: Env): boolean => onish(env['HUB_TRACE']);
 
 /**
  * Spends CPU for about `ms` milliseconds, then returns how long it actually took.
@@ -373,7 +388,23 @@ export function container(opts: ContainerOptions = {}): Server {
 	// calling container() still sees a complete vocabulary.
 	const wired = (): readonly Neighbor[] => (neighbors ??= discover(env, registry.vocabulary()));
 
-	const context = (): Ctx => ({
+	const ownRegion = (): string | undefined => env['REGION'] ?? env['AWS_REGION'];
+
+	/**
+	 * A trace for one run — one request, or one poll that returned something.
+	 *
+	 * Per run, never per task. A single trace covering the lifetime of a poller would grow for days
+	 * and X-Ray would refuse it: the trace id carries the time it was minted and a trace far from
+	 * now is rejected.
+	 *
+	 * `opens` because nothing upstream wrote a segment. EventBridge on a schedule has no caller to
+	 * inherit a trace from, and neither does an HTTP request arriving without a trace header — so
+	 * this run is where the trace begins.
+	 */
+	const newTrace = (): TraceContext | undefined =>
+		tracingEnabled(env) ? { root: traceId(), parent: spanId(), opens: true, sampled: true } : undefined;
+
+	const context = (trace?: TraceContext): Ctx => ({
 		// The generator writes NAME for every node it injects variables into, and on ECS it carries
 		// the container's own logical name rather than the task's — which is the name the report
 		// should show, because the container is what ran.
@@ -385,7 +416,23 @@ export function container(opts: ContainerOptions = {}): Server {
 		region: (n) => n?.props['REGION'] ?? env['REGION'] ?? env['AWS_REGION'],
 		account: (n) => n?.props['ACCOUNT'] ?? env['ACCOUNT'],
 		now: () => new Date(),
+		...(trace === undefined ? {} : { trace }),
 	});
+
+	/**
+	 * Sends the trail, and puts the outgoing header back the way it was.
+	 *
+	 * The header is module state in the provider, and the poll loop and the HTTP server share this
+	 * process: leaving one run's trace set would stamp the next run's requests with it, and two
+	 * requests would merge into one trace in the console.
+	 */
+	const finish = async (report: Report, trace: TraceContext | undefined): Promise<void> => {
+		try {
+			await emitTrace(report, trace, context(trace).self, ownRegion(), fetchImpl);
+		} finally {
+			setTraceHeader(undefined);
+		}
+	};
 
 	const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
 		// The path decides only the load-test endpoint. Every other path keeps the original
@@ -424,15 +471,21 @@ export function container(opts: ContainerOptions = {}): Server {
 		const body = await readBody(req, opts.maxBodyBytes ?? MAX_BODY_BYTES);
 		await ensureCredentials(env, fetchImpl);
 
+		const trace = newTrace();
+		if (trace) setTraceHeader(traceHeader(trace));
+
 		const arrival = await normalize(body);
-		const report = await handle(
-			arrival,
-			wired(),
-			context(),
-			opts.hops === undefined ? {} : { hops: opts.hops }
-		);
+		let report: Report;
+		try {
+			report = await handle(arrival, wired(), context(trace), opts.hops === undefined ? {} : { hops: opts.hops });
+		} finally {
+			// Cleared however this went: a request that threw with the header still set would stamp the
+			// next request's calls with a trace nobody wrote.
+			setTraceHeader(undefined);
+		}
 
 		console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
+		await finish(report, trace);
 
 		// 200 even when hops failed. The report *is* the answer, and a failed wire is a fact it
 		// carries, not a transport error — answering 5xx would make the load balancer treat a
@@ -485,13 +538,31 @@ export function container(opts: ContainerOptions = {}): Server {
 		while (!stopping) {
 			try {
 				await ensureCredentials(env, fetchImpl);
-				const report = await consumeOnce(
-					source,
-					targets,
-					context(),
-					opts.hops === undefined ? {} : { hops: opts.hops }
-				);
-				if (report) console.log(JSON.stringify({ hub: report }));
+
+				// Minted before the poll and discarded when it returns nothing. The receive itself is
+				// not in the trace: an idle poll is three requests a minute forever, and recording
+				// them would bill a trace a minute to say that nothing happened.
+				const trace = newTrace();
+				if (trace) setTraceHeader(traceHeader(trace));
+
+				let report: Report | null = null;
+				try {
+					report = await consumeOnce(
+						source,
+						targets,
+						context(trace),
+						opts.hops === undefined ? {} : { hops: opts.hops }
+					);
+				} finally {
+					// Cleared on the way out however this went. A poll that threw with the header still
+					// set would stamp the next poll's requests with a trace that was never written.
+					setTraceHeader(undefined);
+				}
+
+				if (report) {
+					console.log(JSON.stringify({ hub: report }));
+					await finish(report, trace);
+				}
 			} catch (err) {
 				// Never fatal. A queue that is briefly unreachable, or a credential rotation that
 				// failed once, must not end a task that ECS would then restart from nothing — and a

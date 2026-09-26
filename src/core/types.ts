@@ -101,6 +101,52 @@ export interface Envelope {
 }
 
 // ---------------------------------------------------------------------------
+// Trace
+// ---------------------------------------------------------------------------
+
+/**
+ * The X-Ray trace this run belongs to.
+ *
+ * Read from what the platform already supplies rather than invented. On Lambda that is
+ * `_X_AMZN_TRACE_ID`, whose `Root` the Lambda service has *already* used for the invocation
+ * segment: minting our own there would put every hop in a second trace sharing nothing with the
+ * one the console shows, which reads exactly like no instrumentation at all.
+ *
+ * `parent` is the id of a segment somebody else wrote. Present on Lambda, absent in a container,
+ * and that absence decides the shape of what gets sent — subsegments hang off a parent, a run
+ * with no parent needs a segment of its own first. See `segments` in core/report.ts.
+ */
+export interface TraceContext {
+	/** X-Ray trace id: `1-<8 hex seconds>-<24 hex random>`. */
+	readonly root: string;
+	/**
+	 * The id this run's hops hang from, and the id the *next* workload names as its parent.
+	 *
+	 * One field for both because they are the same id. A downstream segment that names no parent
+	 * still lands in the right trace, and the console still draws no arrow to it — the trace holds
+	 * two unconnected nodes, which looks like the instrumentation half working.
+	 */
+	readonly parent?: string;
+	/**
+	 * Whether `parent` names a segment THIS run has to write.
+	 *
+	 * Absent on Lambda: the service wrote the invocation segment and owns it, so writing another
+	 * under the same trace shows the function twice. Set in a container, where nobody wrote one and
+	 * subsegments pointing at a segment that does not exist are accepted by the API and then never
+	 * displayed. The runtime is the only place that knows which of the two it is.
+	 */
+	readonly opens?: boolean;
+	/**
+	 * Whether this trace is being recorded.
+	 *
+	 * The platform's answer, not ours, and on Lambda it is also the entire opt-in: the runtime
+	 * says `Sampled=0` unless tracing is switched on for the function, so a deployment that never
+	 * asked for X-Ray sends nothing and is billed nothing, with no flag of ours involved.
+	 */
+	readonly sampled: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Send
 // ---------------------------------------------------------------------------
 
@@ -123,6 +169,18 @@ export interface Ctx {
 	account(n?: Neighbor): string | undefined;
 	/** Injected so that reports are deterministic under test. */
 	now(): Date;
+	/**
+	 * The trace this run belongs to.
+	 *
+	 * A sender reads it only to hand the trace to the *next* workload — the queue that carries a
+	 * message also has to carry the trace, or the chain restarts at every hop and the console shows
+	 * one trace per resource instead of one per request.
+	 *
+	 * PRESENT MEANS RECORDING. The runtime leaves it out when the trace is not being sampled, so a
+	 * sender never has to ask: absent is the ordinary case and every sender must tolerate it, and
+	 * present is permission to put the trace on the wire.
+	 */
+	readonly trace?: TraceContext;
 }
 
 /**
@@ -181,6 +239,15 @@ export interface Hop {
 	readonly label: string;
 	readonly ok: boolean;
 	readonly ms: number;
+	/**
+	 * When the attempt started, epoch milliseconds.
+	 *
+	 * A duration alone cannot be turned into a trace. X-Ray places a subsegment by absolute start
+	 * and end, and reconstructing starts by laying durations end to end assumes the hops ran with
+	 * no gap between them — true today, and a timing chart that silently lies the day it stops
+	 * being true.
+	 */
+	readonly at: number;
 	readonly err?: string;
 }
 

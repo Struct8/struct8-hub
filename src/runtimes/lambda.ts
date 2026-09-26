@@ -6,8 +6,10 @@
  */
 
 import { discover } from '../core/discovery.js';
+import { parseTraceHeader, traceHeader } from '../core/envelope.js';
 import { ack, handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
+import * as aws from '../providers/aws.js';
 import type { Ctx, Neighbor, Report } from '../core/types.js';
 
 /** The fields of the Lambda context object this shim reads. */
@@ -99,18 +101,41 @@ export function lambda(opts: LambdaOptions = {}) {
 		const ownRegion = env('REGION') ?? env('AWS_REGION');
 		const ownAccount = accountFrom(context);
 
+		// The trace the platform already opened. Read per invocation, never cached: the variable is
+		// rewritten on every one, and a container that served ten requests would otherwise file nine
+		// of them under the first request's trace.
+		const trace = parseTraceHeader(env('_X_AMZN_TRACE_ID'));
+
+		// Stamped on every outgoing AWS request from here on, and cleared when nothing is recording so
+		// that a function with tracing off signs exactly the requests it signed before.
+		aws.setTraceHeader(trace?.sampled ? traceHeader(trace) : undefined);
+
 		const ctx: Ctx = {
 			self,
 			fetch: globalThis.fetch,
 			region: (n) => n?.props['REGION'] ?? ownRegion,
 			account: (n) => n?.props['ACCOUNT'] ?? ownAccount,
 			now: () => new Date(),
+			// Only when it is actually being recorded. Senders read this to stamp the trace onto what
+			// they send, and stamping an unrecorded one would add a field to every message of every
+			// deployment that never asked for tracing — for a trace nobody will look at.
+			...(trace?.sampled ? { trace } : {}),
 		};
 
 		const arrival = await normalize(event);
-		const report = await handle(arrival, neighbors, ctx, opts.hops === undefined ? {} : { hops: opts.hops });
+		const report = await handle(arrival, neighbors, ctx, {
+			...(opts.hops === undefined ? {} : { hops: opts.hops }),
+			// The platform's trace id wins over the envelope's, which is what `handle` documents. The
+			// invocation segment is already filed under this one.
+			...(trace === null ? {} : { trace: trace.root }),
+		});
 
 		console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
+
+		// After the log, and awaited. Awaited because Lambda freezes the container the moment the
+		// handler resolves and an unawaited request is simply never sent; after the log because the
+		// report is the product and must not wait on telemetry to be readable.
+		await aws.emitTrace(report, trace ?? undefined, self, ownRegion, globalThis.fetch);
 
 		// The batch contract is not optional. An absent list makes the source treat every message
 		// as failed and redeliver the lot; on a stream the checkpoint rewinds to the lowest

@@ -139,6 +139,44 @@ and touches no report. It lives on its own path, so the `GET` health check and t
 fan-out behave exactly the same whether it is on or off. Point k6 at `POST /loadtest?ms=...`
 through the load balancer, and the ASG scales on the CPU each request costs — a cost you set.
 
+## Tracing (X-Ray)
+
+The report can go to X-Ray as well as to the log. Each hop becomes one subsegment — the target's
+name, how long it took, the reason when it failed — and the trace carries on to the next workload,
+so a request crossing four resources is one trace in the console instead of four.
+
+**On Lambda there is nothing to switch on.** The runtime reads `_X_AMZN_TRACE_ID`, which AWS sets on
+every invocation, and follows it: `Sampled=1` when the invocation is being traced, `Sampled=0` when
+it is not. A function that is not traced sends no segments and signs exactly the requests it signed
+before.
+
+**In a container, set `HUB_TRACE`.** ECS has no tracing setting to read, so there is nothing to
+consult, and recording by default would start charging X-Ray on every task that pulled a new image.
+
+```
+HUB_TRACE=on
+```
+
+**Permission:** the execution role on Lambda, the task role on ECS, needs `xray:PutTraceSegments`
+and `xray:PutTelemetryRecords`. Without them the fan-out still happens and the log carries
+`trace not sent: AccessDenied` — telemetry failing is not the work failing.
+
+**Important:** X-Ray sampling rules do not apply. Segments go up through `PutTraceSegments`, which
+records what it is handed; a sampling rule governs the decision a client SDK makes, and there is no
+client SDK here — the transport is signed `fetch`. What decides is `Sampled` on Lambda and
+`HUB_TRACE` in a container.
+
+Two things carry the trace onward, and both are needed:
+
+| hop | what carries it |
+|---|---|
+| a service that keeps traces of its own — SNS, API Gateway, Step Functions, a Lambda invoke | the `X-Amzn-Trace-Id` header on the signed request |
+| a queue, for whatever consumes it later | SQS's `AWSTraceHeader` message system attribute |
+
+The second is the one no header can do: the sender and the consumer never speak to each other, so
+the trace travels with the message. An event source mapping reads that attribute and opens the
+consumer's invocation under the same trace, which is what joins two functions into one.
+
 ## How it works
 
 **Discovery.** The generator injects one environment variable per wire, named after the target's
