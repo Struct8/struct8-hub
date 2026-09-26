@@ -112,6 +112,12 @@ be fooled by content.
 `trace` is what makes a four-hop chain one story instead of four unrelated logs, and it is what a
 diagram needs to color a wire green.
 
+Its FORMAT is load-bearing and not free to change: `1-<8 hex seconds>-<24 hex random>`, which is
+X-Ray's. A UUID does the correlating just as well — that is what this used to be — and X-Ray
+rejects one. The id does not stay here: it is stamped onto outgoing messages so that the next
+workload reports under the same trace, so an id the tracing service refuses is a chain that
+correlates perfectly in the logs and not at all in the console. See "Tracing" in the README.
+
 ## Seams left open
 
 Cross-provider wiring is out of scope for now. These are the places where it will attach, listed
