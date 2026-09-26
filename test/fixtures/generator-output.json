@@ -6,20 +6,20 @@
 		"",
 		"Recapture with: node scripts/capture-contract-fixture.mjs <path-to-CloudMan-checkout>"
 	],
-
 	"capturedFrom": [
 		"backend/HCLAWSV2-ts/local-dev/captures/last_payload.json",
 		"backend/HCLAWSV2-ts/test/.plan-scratch/41a00086-da83-4a70-b074-888ddd34970c/main.tf",
 		"backend/HCLAWSV2-ts/test/.plan-scratch/xd3fenz5-LenB6gRJuUJt/main.tf",
-		"scripts/import-harness/.harness-scratch/compile-diagrama/main.tf",
 		"scripts/import-harness/.harness-scratch/ecs-stack-completo/main.tf"
 	],
-
-	"capturedOn": "2026-09-01",
-
-	"base": ["NAME", "REGION", "ACCOUNT"],
-
+	"capturedOn": "2026-09-26",
+	"base": [
+		"NAME",
+		"REGION",
+		"ACCOUNT"
+	],
 	"wired": [
+		"AWS_CLOUDWATCH_EVENT_BUS_NAME_0",
 		"AWS_DYNAMODB_TABLE_NAME_0",
 		"AWS_LAMBDA_FUNCTION_NAME_0",
 		"AWS_S3_BUCKET_NAME_0",
@@ -28,7 +28,6 @@
 		"AWS_SQS_QUEUE_NAME_0",
 		"AWS_SSM_PARAMETER_NAME_0"
 	],
-
 	"ignored": {
 		"AWS_AUTOSCALING_GROUP_NAME_0": "infrastructure: a scaling group is not a destination for a message",
 		"AWS_DB_INSTANCE_DB_NAME_0": "blocked: SQL over TCP, see docs/coverage.md",

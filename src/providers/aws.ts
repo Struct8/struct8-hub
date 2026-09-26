@@ -173,9 +173,10 @@ const JSON_DIALECT: Record<string, '1.0' | '1.1'> = {
 	logs: '1.1',
 	ssm: '1.1',
 	secretsmanager: '1.1',
+	events: '1.1',
 };
 
-/** JSON-RPC protocol: SQS, DynamoDB, Kinesis, Firehose, CloudWatch Logs, SSM, Secrets Manager. */
+/** JSON-RPC protocol: SQS, DynamoDB, Kinesis, Firehose, CloudWatch Logs, SSM, Secrets Manager, EventBridge. */
 export async function json(
 	service: string,
 	region: string,

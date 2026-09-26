@@ -45,6 +45,7 @@ const DIALECT: Record<string, string> = {
 	logs: '1.1',
 	ssm: '1.1',
 	secretsmanager: '1.1',
+	events: '1.1',
 };
 
 for (const [service, dialect] of Object.entries(DIALECT)) {

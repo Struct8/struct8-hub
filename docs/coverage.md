@@ -2,12 +2,16 @@
 
 What Hub can reach, what it cannot, and why. Derived from the catalog rather than from memory:
 the candidate set is every type that a compute node can be wired to, plus every type that can be
-wired into one. Fifty-two types qualify; the table below is what remains after removing the ones
+wired into one. Fifty-three types qualify; the table below is what remains after removing the ones
 with no data plane.
+
+That count is not fixed: it is the catalog's, and the catalog moves. `aws_cloudwatch_event_bus`
+joined it on 2026-09-26, when a connection from a compute node to a bus was added — until then no
+workload could be wired to one, so no variable was emitted and there was nothing to reach.
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 14 send targets and 12 event sources across 18
+**Every applicable AWS resource is implemented**: 15 send targets and 12 event sources across 19
 modules. What remains is the five below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
@@ -22,8 +26,8 @@ targets. It is not.
 
 The core fans out to whatever neighbor list it is given, and that behavior is tested once. What a
 resource contributes is at most two small functions: how to send to it, and how to read an event
-from it. So coverage is **sources + targets**, not their product — twenty-six small functions,
-not a hundred and sixty-eight combinations.
+from it. So coverage is **sources + targets**, not their product — twenty-seven small functions,
+not a hundred and eighty combinations.
 
 The part of the matrix that does need asserting is that the sources stay distinct, and the
 conformance suite does it: every fixture is offered to every receiver, and exactly one must claim
@@ -65,6 +69,7 @@ The bulk of the work, and mechanical. Each is one file: build a request, sign it
 | `aws_ssm_parameter` | `PutParameter`, overwriting | ✓ |
 | `aws_secretsmanager_secret` | `PutSecretValue` — see below | ✓ |
 | `aws_kinesis_video_stream` | `DescribeStream` — reachability only, see below | ✓ |
+| `aws_cloudwatch_event_bus` | `PutEvents` — see below | ✓ |
 
 **The two parameter stores receive the message, like every other destination here.** They read
 until 2026-09-05, because the wire's generated policy granted reading and nothing else — and a
@@ -80,6 +85,20 @@ from the reader's side. The secret's value is still never logged and never put i
 The wire that *enters* a workload is a different thing and stays read-only: a parameter or secret
 wired into an ECS box is injected into the container's `secrets`, and the reader there is ECS
 itself as it starts the task.
+
+**The event bus is the one destination that can refuse an event and still answer 200.** PutEvents
+replies `FailedEntryCount: 1` with the reason in the body, so the sender reads the body — a hop
+reported as delivered for an event that was never published is exactly the silence this package
+exists to remove. Two other measurements from the same day, against the live API: a bus name that
+does not exist is accepted with an EventId and the event is dropped, which is why the name is only
+ever taken off the wire; and `Source` is required, so it and `DetailType` are constants here
+(`struct8.hub`, `Hub Message`) because the contract carries neither. A rule on the bus has to match
+them, and `{"source": ["struct8.hub"]}` matches everything Hub publishes from any workload.
+
+The bus sends and never receives, the mirror of `aws_cloudwatch_event_rule`, which receives and
+never sends: publishing happens at the bus, delivery happens at the rule. The two together close a
+round trip — the detail Hub publishes is the sealed envelope, and the rule hands its target that
+detail as an object, where the next Hub finds the trace and the remaining hops.
 
 **Kinesis Video is described, not written to.** Ingestion means `PutMedia`, a long-lived chunked
 upload of MKV fragments — a session, not a request. Synthesising a fragment out of a text message

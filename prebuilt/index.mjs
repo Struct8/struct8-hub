@@ -642,7 +642,8 @@ var JSON_DIALECT = {
   firehose: "1.1",
   logs: "1.1",
   ssm: "1.1",
-  secretsmanager: "1.1"
+  secretsmanager: "1.1",
+  events: "1.1"
 };
 async function json(service, region, target, body, fetchImpl = fetch) {
   const dialect = JSON_DIALECT[service];
@@ -843,6 +844,50 @@ register({
       describe: `CloudFront ${eventType} on ${distributionId}`,
       items: [{ body: `${request?.method ?? "?"} ${request?.uri ?? "/"}` }]
     };
+  }
+});
+
+// dist/resources/aws_cloudwatch_event_bus/index.js
+var SOURCE = "struct8.hub";
+var DETAIL_TYPE = "Hub Message";
+register({
+  type: "aws_cloudwatch_event_bus",
+  capabilities: ["topic"],
+  /**
+   * Send only, and the mirror of the rule next door: a bus is where events are published, a rule
+   * is how they come back out. `aws_cloudwatch_event_rule` receives and never sends; this one
+   * sends and never receives.
+   */
+  async send(n, envelope, ctx) {
+    const bus = n.props["ARN"] ?? n.props["NAME"];
+    if (!bus)
+      throw new Error("no bus name and no bus ARN on the wire");
+    const region = ctx.region(n);
+    if (!region)
+      throw new Error("no region for the bus and none for the workload");
+    const answer = await json("events", region, "AWSEvents.PutEvents", {
+      Entries: [
+        {
+          EventBusName: bus,
+          Source: SOURCE,
+          DetailType: DETAIL_TYPE,
+          // The sealed envelope IS the detail, so the chain survives the bus: a rule
+          // hands its target the detail as an object, the Hub on the other side
+          // serializes it back, and the marker, the trace and the remaining hops are
+          // all still in it.
+          Detail: seal(envelope),
+          // EventBridge's equivalent of the queue's system attribute, and it matters for
+          // the same reason: the publisher and the rule's target never speak to each
+          // other, so no HTTP header can carry the trace across. Absent when nothing is
+          // being recorded.
+          ...ctx.trace === void 0 ? {} : { TraceHeader: traceHeader(ctx.trace) }
+        }
+      ]
+    }, ctx.fetch);
+    const rejected = answer?.Entries?.find((e) => e.ErrorCode);
+    if (rejected || answer?.FailedEntryCount) {
+      throw new Error(`${rejected?.ErrorCode ?? "rejected"}: ${rejected?.ErrorMessage ?? "the bus rejected the event"}`);
+    }
   }
 });
 

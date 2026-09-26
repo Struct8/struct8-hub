@@ -22,7 +22,7 @@ AWS account.
 - Core: `discovery`, `envelope`, `registry`, `report`, `hub`. 28 tests, no network.
 - AWS transport over signed `fetch` (`aws4fetch`), with signing kept separate from sending so a
   sender can be exercised with a fake `fetch` — and so the identity port has somewhere to attach.
-- Every applicable AWS resource: 18 modules covering 14 send targets and 12 event sources. The
+- Every applicable AWS resource: 19 modules covering 15 send targets and 12 event sources. The
   candidate set was derived from the catalog rather than estimated — see `docs/coverage.md`.
 - Conformance suite that iterates the registry, so a new resource is tested without anyone writing
   a test for it.
@@ -31,8 +31,8 @@ AWS account.
   `scripts/capture-contract-fixture.mjs`). Every captured name must be classified as base, wired,
   or ignored-with-a-reason; an unclassified one fails the suite, because the default behaviour for
   an unclassified type is the silence this package exists to remove.
-- Live protocol probe (`scripts/probe-aws.mjs`), read-only, covering all eleven service/protocol
-  pairs. 168 tests offline.
+- Live protocol probe (`scripts/probe-aws.mjs`), read-only, covering all twelve service/protocol
+  pairs. 254 tests offline.
 - AWS Lambda runtime.
 - `image/`: the container artifact and its `Dockerfile` in one folder, so `docker build image`
   works from a clean clone. The Dockerfile it replaces copied `build/index.mjs`, which
@@ -88,6 +88,21 @@ AWS account.
   is accepted by the API and never displayed. The execution or task role needs
   `xray:PutTraceSegments` and `xray:PutTelemetryRecords`; without them the fan-out is unaffected and
   the reason is logged, because telemetry failing is not the work failing.
+- Publishing to a custom EventBridge bus (`aws_cloudwatch_event_bus`, `PutEvents`). It became
+  reachable on 2026-09-26, when the catalog added the connection from a compute node to a bus:
+  before that no workload could be wired to one, so no variable was emitted and there was nothing
+  to discover. The wire grants `events:PutEvents` on the bus ARN and writes
+  `AWS_CLOUDWATCH_EVENT_BUS_NAME_<label>`.
+  Three things were measured against the live API rather than read off a page, and each changes the
+  code. A rejected entry answers **HTTP 200** with `FailedEntryCount: 1` and the reason in the body,
+  so the body is read — otherwise a malformed event is reported as a delivered hop. A bus name that
+  does not exist is accepted, given an EventId, and dropped, which is why the name is only ever
+  taken off the wire. And `Source` is required: it and `DetailType` are constants (`struct8.hub`,
+  `Hub Message`) because the contract carries neither, so one rule matches everything Hub publishes.
+  The detail is the sealed envelope, and the rule on the other side hands it to its target as an
+  object — so a chain crossing a bus keeps its trace and its remaining hops instead of starting
+  over with a full budget. The trace also rides the entry's `TraceHeader`, EventBridge's equivalent
+  of the queue's system attribute, for the hop no HTTP header reaches.
 
 ### Fixed
 

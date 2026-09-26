@@ -74,6 +74,7 @@ test('a captured environment rebuilds exactly the wires it describes', () => {
 	assert.deepEqual(
 		neighbors.map((n) => n.type).sort(),
 		[
+			'aws_cloudwatch_event_bus',
 			'aws_dynamodb_table',
 			'aws_lambda_function',
 			'aws_s3_bucket',

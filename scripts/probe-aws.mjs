@@ -33,7 +33,7 @@ const client = new AwsClient({
 const SIGNING_BROKEN = /InvalidSignature|SignatureDoesNotMatch|UnrecognizedClient|InvalidClientTokenId|MissingAuthentication/i;
 const NOT_AUTHORISED = /AccessDenied|not authorized|UnauthorizedOperation/i;
 
-const dialects = { dynamodb: '1.0', sqs: '1.0', kinesis: '1.1', firehose: '1.1', logs: '1.1', ssm: '1.1', secretsmanager: '1.1' };
+const dialects = { dynamodb: '1.0', sqs: '1.0', kinesis: '1.1', firehose: '1.1', logs: '1.1', ssm: '1.1', secretsmanager: '1.1', events: '1.1' };
 
 const rpc = (service, target, body) => ({
 	service,
@@ -53,6 +53,7 @@ const PROBES = {
 	'logs (json 1.1)': rpc('logs', 'Logs_20140328.DescribeLogGroups', { limit: 1 }),
 	'ssm (json 1.1)': rpc('ssm', 'AmazonSSM.DescribeParameters', { MaxResults: 1 }),
 	'secretsmanager (json 1.1)': rpc('secretsmanager', 'secretsmanager.ListSecrets', { MaxResults: 1 }),
+	'events (json 1.1)': rpc('events', 'AWSEvents.ListEventBuses', { Limit: 1 }),
 
 	'sns (query)': {
 		service: 'sns',
