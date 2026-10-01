@@ -1,6 +1,8 @@
 // dist/runtimes/container.js
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import cluster from "node:cluster";
+import { availableParallelism } from "node:os";
 
 // dist/core/discovery.js
 var COMMON_KEYS = [
@@ -728,6 +730,56 @@ function burnCpu(ms) {
   return Date.now() - started;
 }
 var environment = () => typeof process === "undefined" ? {} : process.env;
+var WORKER_MEM_MB = 70;
+function workerCount(env = environment()) {
+  const override = Number(env["HUB_WORKERS"]);
+  if (Number.isInteger(override) && override >= 1)
+    return override;
+  const cores = Math.max(1, availableParallelism());
+  const ceilings = [cores];
+  const cpuQuota = cgroupCpuLimit();
+  if (cpuQuota)
+    ceilings.push(Math.max(1, Math.ceil(cpuQuota)));
+  const memMb = cgroupMemLimitMb();
+  if (memMb)
+    ceilings.push(Math.max(1, Math.floor(memMb / WORKER_MEM_MB)));
+  return Math.min(...ceilings);
+}
+function cgroupCpuLimit() {
+  const v2 = readTrimmedSafe("/sys/fs/cgroup/cpu.max");
+  if (v2) {
+    const [quota, period] = v2.split(/\s+/);
+    if (quota && quota !== "max" && period) {
+      const q2 = Number(quota), p2 = Number(period);
+      if (q2 > 0 && p2 > 0)
+        return q2 / p2;
+    }
+    return void 0;
+  }
+  const q = Number(readTrimmedSafe("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"));
+  const p = Number(readTrimmedSafe("/sys/fs/cgroup/cpu/cpu.cfs_period_us"));
+  if (Number.isFinite(q) && q > 0 && Number.isFinite(p) && p > 0)
+    return q / p;
+  return void 0;
+}
+function cgroupMemLimitMb() {
+  for (const path of ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]) {
+    const raw = readTrimmedSafe(path);
+    if (!raw || raw === "max")
+      continue;
+    const bytes = Number(raw);
+    if (Number.isFinite(bytes) && bytes > 0 && bytes < 1024 ** 4)
+      return bytes / (1024 * 1024);
+  }
+  return void 0;
+}
+function readTrimmedSafe(path) {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return void 0;
+  }
+}
 async function taskCredentials(opts = {}) {
   const env = opts.env ?? environment();
   const fetchImpl = opts.fetch ?? globalThis.fetch;
@@ -841,9 +893,65 @@ function respond(res, status, payload) {
   });
   res.end(text);
 }
+function runLoadtestPrimary(count, opts) {
+  const env = environment();
+  const fetchImpl = opts.fetch ?? globalThis.fetch;
+  console.log(JSON.stringify({ hub: "loadtest cluster", workers: count, cores: availableParallelism() }));
+  for (let i = 0; i < count; i++)
+    cluster.fork({ HUB_POLL: "" });
+  let stopping = false;
+  cluster.on("exit", (_worker, code, signal) => {
+    if (!stopping) {
+      console.error(JSON.stringify({ hub: "worker exited", code, signal, action: "respawning" }));
+      cluster.fork({ HUB_POLL: "" });
+    }
+  });
+  const want = opts.poll === void 0 ? env["HUB_POLL"] : opts.poll;
+  const polling = want ? primaryPoll(String(want), env, fetchImpl, opts, () => stopping).catch((err) => {
+    console.error(JSON.stringify({ hub: "poll setup failed", error: err instanceof Error ? err.message : String(err) }));
+  }) : Promise.resolve();
+  const stop = () => {
+    stopping = true;
+    for (const worker of Object.values(cluster.workers ?? {}))
+      worker?.process.kill("SIGTERM");
+    void polling.finally(() => process.exit(0));
+  };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+  return createServer();
+}
+async function primaryPoll(want, env, fetchImpl, opts, stopping) {
+  const neighbors = discover(env, vocabulary());
+  const ctx = {
+    self: env["NAME"] ?? env["HOSTNAME"] ?? "hub",
+    fetch: fetchImpl,
+    region: (n) => n?.props["REGION"] ?? env["REGION"] ?? env["AWS_REGION"],
+    account: (n) => n?.props["ACCOUNT"] ?? env["ACCOUNT"],
+    now: () => /* @__PURE__ */ new Date()
+  };
+  const source = selectSource(neighbors, want);
+  const targets = neighbors.filter((n) => n !== source);
+  console.log(JSON.stringify({ hub: "polling", source: `${source.type}/${source.label}`, targets: targets.length }));
+  while (!stopping()) {
+    try {
+      await ensureCredentials(env, fetchImpl);
+      const report = await consumeOnce(source, targets, ctx, opts.hops === void 0 ? {} : { hops: opts.hops });
+      if (report)
+        console.log(JSON.stringify({ hub: report }));
+    } catch (err) {
+      console.error(JSON.stringify({ hub: "poll failed", error: err instanceof Error ? err.message : String(err) }));
+      await new Promise((resolve) => setTimeout(resolve, POLL_BACKOFF_MS));
+    }
+  }
+}
 function container(opts = {}) {
   const env = environment();
   const fetchImpl = opts.fetch ?? globalThis.fetch;
+  if (opts.port === void 0 && loadtestEnabled(env) && cluster.isPrimary) {
+    const count = workerCount(env);
+    if (count > 1)
+      return runLoadtestPrimary(count, opts);
+  }
   let neighbors;
   const wired = () => neighbors ??= discover(env, vocabulary());
   const ownRegion = () => env["REGION"] ?? env["AWS_REGION"];
