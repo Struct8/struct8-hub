@@ -21,6 +21,8 @@
 
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
+import cluster from 'node:cluster';
+import { availableParallelism } from 'node:os';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
 import { discover } from '../core/discovery.js';
@@ -116,6 +118,86 @@ function burnCpu(ms: number): number {
 type Env = Record<string, string | undefined>;
 
 const environment = (): Env => (typeof process === 'undefined' ? {} : (process.env as Env));
+
+// ---------------------------------------------------------------------------
+// Worker count (load-test mode only)
+// ---------------------------------------------------------------------------
+
+/** Memory a single worker is assumed to need. The measured RSS of an idle Hub is ~35 MiB; double it for headroom. */
+const WORKER_MEM_MB = 70;
+
+/**
+ * How many processes to run under the load-test cluster.
+ *
+ * The point is to burn every core: `/loadtest` is a busy loop, Node runs JavaScript on one thread,
+ * so one process pins one core and no amount of load passes `100/cores` percent of the instance.
+ * A worker per core fixes that, and the count has to be discovered at runtime because the template
+ * can land on any instance, from a nano to a 16-vCPU box.
+ *
+ * But "one per core" is unsafe on its own. In a container Node counts the HOST's cores, not the
+ * task's CPU share, so a Hub task with a tenth of a vCPU on a 16-core host would fork 16 processes
+ * and, at ~70 MiB each, blow past a 200 MiB task and be OOM-killed into a restart loop. So the
+ * count is the SMALLEST of three ceilings:
+ *   - cores the runtime reports;
+ *   - the container's CPU quota (cgroup v2 `cpu.max`, or v1 quota/period), rounded up — no sense
+ *     running more busy loops than the scheduler will ever run at once;
+ *   - what the container's memory limit (cgroup) leaves room for at WORKER_MEM_MB each.
+ * HUB_WORKERS overrides the lot, and 1 keeps today's single-process behaviour.
+ */
+export function workerCount(env: Env = environment()): number {
+	const override = Number(env['HUB_WORKERS']);
+	if (Number.isInteger(override) && override >= 1) return override;
+
+	const cores = Math.max(1, availableParallelism());
+	const ceilings = [cores];
+
+	const cpuQuota = cgroupCpuLimit();
+	if (cpuQuota) ceilings.push(Math.max(1, Math.ceil(cpuQuota)));
+
+	const memMb = cgroupMemLimitMb();
+	if (memMb) ceilings.push(Math.max(1, Math.floor(memMb / WORKER_MEM_MB)));
+
+	return Math.min(...ceilings);
+}
+
+/** Reads the container's CPU quota in whole-core units, or undefined when unconstrained / not in a container. */
+function cgroupCpuLimit(): number | undefined {
+	// cgroup v2: "<quota> <period>" in microseconds, or "max <period>" when unlimited.
+	const v2 = readTrimmedSafe('/sys/fs/cgroup/cpu.max');
+	if (v2) {
+		const [quota, period] = v2.split(/\s+/);
+		if (quota && quota !== 'max' && period) {
+			const q = Number(quota), p = Number(period);
+			if (q > 0 && p > 0) return q / p;
+		}
+		return undefined;
+	}
+	// cgroup v1: quota and period in separate files; quota -1 means unlimited.
+	const q = Number(readTrimmedSafe('/sys/fs/cgroup/cpu/cpu.cfs_quota_us'));
+	const p = Number(readTrimmedSafe('/sys/fs/cgroup/cpu/cpu.cfs_period_us'));
+	if (Number.isFinite(q) && q > 0 && Number.isFinite(p) && p > 0) return q / p;
+	return undefined;
+}
+
+/** Reads the container's memory limit in MiB, or undefined when unconstrained / not in a container. */
+function cgroupMemLimitMb(): number | undefined {
+	for (const path of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+		const raw = readTrimmedSafe(path);
+		if (!raw || raw === 'max') continue;
+		const bytes = Number(raw);
+		// An unconstrained cgroup reports a huge sentinel (near 2^63); treat anything absurd as no limit.
+		if (Number.isFinite(bytes) && bytes > 0 && bytes < 1024 ** 4) return bytes / (1024 * 1024);
+	}
+	return undefined;
+}
+
+function readTrimmedSafe(path: string): string | undefined {
+	try {
+		return readFileSync(path, 'utf8').trim();
+	} catch {
+		return undefined;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Credentials
@@ -365,6 +447,88 @@ function respond(res: ServerResponse, status: number, payload: unknown): void {
 }
 
 /**
+ * The load-test primary: fork `count` workers, keep them up, and shut them down together.
+ *
+ * The polling consumer belongs here and only here — N workers reading one queue would each receive
+ * and delete the same messages. The workers are forked with `HUB_POLL` cleared, so when each runs
+ * container() it starts a server and nothing else.
+ *
+ * Returns a stub Server so the public signature is unchanged. It never listens; the workers do.
+ */
+function runLoadtestPrimary(count: number, opts: ContainerOptions): Server {
+	const env = environment();
+	const fetchImpl = opts.fetch ?? globalThis.fetch;
+
+	console.log(JSON.stringify({ hub: 'loadtest cluster', workers: count, cores: availableParallelism() }));
+
+	// A worker that also polled would duplicate the consumer. One primary, one poll loop.
+	for (let i = 0; i < count; i++) cluster.fork({ HUB_POLL: '' });
+
+	let stopping = false;
+	// Replace a worker that dies for any reason other than our own shutdown, so the core it held
+	// does not go idle for the rest of the test.
+	cluster.on('exit', (_worker, code, signal) => {
+		if (!stopping) {
+			console.error(JSON.stringify({ hub: 'worker exited', code, signal, action: 'respawning' }));
+			cluster.fork({ HUB_POLL: '' });
+		}
+	});
+
+	const want = opts.poll === undefined ? env['HUB_POLL'] : opts.poll;
+	const polling: Promise<void> = want
+		? primaryPoll(String(want), env, fetchImpl, opts, () => stopping).catch((err: unknown) => {
+				console.error(
+					JSON.stringify({ hub: 'poll setup failed', error: err instanceof Error ? err.message : String(err) })
+				);
+			})
+		: Promise.resolve();
+
+	// ECS sends SIGTERM and kills after StopTimeout. Pass it on to every worker, let each close its
+	// server, and exit once the primary's own poll loop has wound down.
+	const stop = (): void => {
+		stopping = true;
+		for (const worker of Object.values(cluster.workers ?? {})) worker?.process.kill('SIGTERM');
+		void polling.finally(() => process.exit(0));
+	};
+	process.once('SIGTERM', stop);
+	process.once('SIGINT', stop);
+
+	// A stub: callers only hold the reference; in the cluster the workers own the real sockets.
+	return createServer();
+}
+
+/** The poll loop, run by the load-test primary so it never starts an HTTP server of its own. Mirrors the loop in container(). */
+async function primaryPoll(
+	want: string,
+	env: Env,
+	fetchImpl: typeof fetch,
+	opts: ContainerOptions,
+	stopping: () => boolean
+): Promise<void> {
+	const neighbors = discover(env, registry.vocabulary());
+	const ctx: Ctx = {
+		self: env['NAME'] ?? env['HOSTNAME'] ?? 'hub',
+		fetch: fetchImpl,
+		region: (n) => n?.props['REGION'] ?? env['REGION'] ?? env['AWS_REGION'],
+		account: (n) => n?.props['ACCOUNT'] ?? env['ACCOUNT'],
+		now: () => new Date(),
+	};
+	const source = selectSource(neighbors, want);
+	const targets = neighbors.filter((n) => n !== source);
+	console.log(JSON.stringify({ hub: 'polling', source: `${source.type}/${source.label}`, targets: targets.length }));
+	while (!stopping()) {
+		try {
+			await ensureCredentials(env, fetchImpl);
+			const report = await consumeOnce(source, targets, ctx, opts.hops === undefined ? {} : { hops: opts.hops });
+			if (report) console.log(JSON.stringify({ hub: report }));
+		} catch (err) {
+			console.error(JSON.stringify({ hub: 'poll failed', error: err instanceof Error ? err.message : String(err) }));
+			await new Promise((resolve) => setTimeout(resolve, POLL_BACKOFF_MS));
+		}
+	}
+}
+
+/**
  * Starts the server.
  *
  * ```js
@@ -381,6 +545,20 @@ function respond(res: ServerResponse, status: number, payload: unknown): void {
 export function container(opts: ContainerOptions = {}): Server {
 	const env = environment();
 	const fetchImpl = opts.fetch ?? globalThis.fetch;
+
+	// Load-test clustering. The primary forks a worker per core (bounded by workerCount) and manages
+	// them; each worker runs the ordinary server below and they share the listen port — the OS
+	// spreads connections across them, so the busy loop lands on every core.
+	//
+	// It engages ONLY in the load-test mode this exists for, and only when run as a real process:
+	//   - loadtestEnabled, so a production Hub is untouched and still a single process;
+	//   - no explicit opts.port, which is the test seam — the suite starts many servers in one
+	//     process on ephemeral ports and must keep getting a real listening Server back;
+	//   - cluster.isPrimary and a count above 1, so a worker does not fork again.
+	if (opts.port === undefined && loadtestEnabled(env) && cluster.isPrimary) {
+		const count = workerCount(env);
+		if (count > 1) return runLoadtestPrimary(count, opts);
+	}
 
 	let neighbors: readonly Neighbor[] | undefined;
 

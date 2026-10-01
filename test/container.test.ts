@@ -10,6 +10,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { availableParallelism } from 'node:os';
 import type { Server } from 'node:http';
 
 import {
@@ -18,6 +19,7 @@ import {
 	resetCredentialCache,
 	selectSource,
 	consumeOnce,
+	workerCount,
 } from '../dist/runtimes/container.js';
 import * as registry from '../dist/core/registry.js';
 import { open, seal } from '../dist/core/envelope.js';
@@ -321,6 +323,37 @@ test('turning the load-test endpoint on leaves health and fan-out untouched', as
 	assert.equal(work.status, 200);
 	assert.equal(report.hops.length, 1);
 	assert.equal(queue.length, 1, 'the fan-out did not reach the queue');
+});
+
+test('HUB_WORKERS overrides the worker count, and 1 keeps a single process', () => {
+	assert.equal(workerCount({ HUB_WORKERS: '3' }), 3);
+	assert.equal(workerCount({ HUB_WORKERS: '1' }), 1);
+});
+
+test('without an override the worker count is at least one and never more than the cores', () => {
+	// The cgroup ceilings depend on where the suite runs, so only the bounds are fixed here.
+	const n = workerCount({});
+	assert.ok(Number.isInteger(n) && n >= 1, `got ${n}`);
+	assert.ok(n <= availableParallelism(), `got ${n} on ${availableParallelism()} cores`);
+});
+
+test('a nonsense HUB_WORKERS is ignored, not obeyed', () => {
+	// 0, negatives and text fall back to the computed count rather than forking nothing or garbage.
+	for (const bad of ['0', '-2', 'many', '1.5', '']) {
+		const n = workerCount({ HUB_WORKERS: bad });
+		assert.ok(Number.isInteger(n) && n >= 1, `HUB_WORKERS=${bad} gave ${n}`);
+	}
+});
+
+test('load-test mode with an explicit port still returns a real listening server', async () => {
+	// The cluster engages only for a real process (no opts.port). The suite, and anything embedding
+	// the runtime on a chosen port, must keep getting a server it can talk to.
+	withEnv({ NAME: 'Worker', HUB_LOADTEST: 'on', HUB_WORKERS: '4' });
+
+	const base = await start();
+	const res = await fetch(`${base}/loadtest?ms=10`, { method: 'POST' });
+
+	assert.equal(res.status, 200);
 });
 
 // ---------------------------------------------------------------------------
