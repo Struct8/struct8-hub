@@ -75,6 +75,7 @@ reached is a silent failure: the variable parses, a neighbor appears, and nothin
 | `SECRET_ARN` | Secrets Manager ARN |
 | `USER_NAME` | database user |
 | `DB_NAME` | database name |
+| `ENGINE` | the database engine, as the provider names it: `postgres`, `mysql`, `aurora-postgresql` |
 | `REGION` | the target's region — **emitted only when it differs from the source's** |
 | `ACCOUNT` | the target's account — **emitted only when it differs from the source's** |
 
@@ -203,7 +204,7 @@ Every captured name must be classified, and the classification is the point:
   neighbor. Reading these as wires would give every workload three phantom destinations.
 - **wired** — a resource this implementation reaches.
 - **ignored** — a resource it does not, *with the reason written down*. `AWS_SUBNET_NAME_0` is
-  emitted by the generator and means nothing to a message; `AWS_DB_INSTANCE_ENDPOINT_0` means
+  emitted by the generator and means nothing to a message; `AWS_EFS_FILE_SYSTEM_ID_0` means
   something and is blocked on a decision. Both are silence, and only the recorded reason
   distinguishes a decision from an oversight.
 

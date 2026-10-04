@@ -13,6 +13,7 @@ import '../dist/resources/index.js';
 import * as registry from '../dist/core/registry.js';
 import { normalize } from '../dist/core/hub.js';
 import { open } from '../dist/core/envelope.js';
+import * as sql from '../dist/providers/sql.js';
 import type { Capability, Ctx, Neighbor } from '../dist/core/types.js';
 // Explicit .ts: Node's type stripping resolves the path as written and does not rewrite .js to
 // .ts. Imports of built code keep pointing at dist, which is what ships.
@@ -45,6 +46,8 @@ const complete = (type: string): Neighbor => ({
 		BUCKET: 'the-resource',
 		QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/111122223333/the-resource',
 		SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:111122223333:secret:the-resource',
+		DB_NAME: 'the-database',
+		ENGINE: 'postgres',
 		REGION: 'us-east-1',
 		ACCOUNT: '111122223333',
 	},
@@ -58,14 +61,29 @@ const ctxWith = (fetchImpl: typeof fetch): Ctx => ({
 	now: () => new Date('2026-08-16T12:00:00Z'),
 });
 
-const okFetch: typeof fetch = async () =>
-	new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+const okFetch: typeof fetch = async (input, init) => {
+	const request = input instanceof Request ? input : new Request(input, init);
+	// The one read a sender legitimately makes before it writes: the database module fetches the
+	// credential it connects with, and an empty answer would be refused as not being one.
+	const body =
+		request.headers.get('x-amz-target') === 'secretsmanager.GetSecretValue'
+			? JSON.stringify({ SecretString: JSON.stringify({ username: 'user', password: 'pass' }) })
+			: '{}';
+	return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+};
 
 const ENVELOPE = open('payload', 'Fn', { trace: 'T', at: '2026-08-16T12:00:00.000Z' });
 
 // Credentials so signing has something to work with. The fake fetch never leaves the process.
 process.env['AWS_ACCESS_KEY_ID'] ??= 'AKIAIOSFODNN7EXAMPLE';
 process.env['AWS_SECRET_ACCESS_KEY'] ??= 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+
+// A database is reached over TCP, not through `fetch`, so the fake `fetch` above cannot stand in
+// for it. The suite hands the Postgres family a driver that accepts and does nothing, which keeps
+// the rules below about the module's behavior and away from the network.
+sql.useDriver('postgres', {
+	connect: async () => ({ run: async () => {}, close: async () => {} }),
+});
 
 test('the registry is not empty', () => {
 	assert.ok(MODULES.length >= 18, `expected the bundled resources, found ${MODULES.length}`);

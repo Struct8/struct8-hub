@@ -14,6 +14,15 @@ AWS account.
 
 ### Added
 
+- A workload can write to a database. `aws_db_instance` is the 20th module: it reads the master
+  credential from the instance's managed secret and inserts the message into `hub_messages`,
+  keyed so that a redelivery is one row. The driver is `pg`, bundled (no layer), chosen by the
+  instance's engine through the new `providers/sql.ts` port; an engine with no driver is refused
+  by name. **Contract:** `ENGINE` is a new key, additive, so the contract stays at version 1.
+  The generator's catalog must export it, and a diagram compiled before that is refused with a
+  message that says so.
+- The bundle gets its own `require`. A CommonJS dependency calls `require('events')`, and an ES
+  module has none: the bundle failed at load, and not under `node -e`, which defines a global one.
 - Wiring contract v1, documenting the environment-variable grammar as the generator emits it
   today, including the two gaps it does not yet cover: no incoming side, and the retired
   `TARGET_` format.

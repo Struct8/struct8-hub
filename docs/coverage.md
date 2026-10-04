@@ -11,7 +11,7 @@ workload could be wired to one, so no variable was emitted and there was nothing
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 15 send targets and 12 event sources across 19
+**Every applicable AWS resource is implemented**: 16 send targets and 12 event sources across 20
 modules. What remains is the five below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
@@ -109,6 +109,50 @@ permission is there".
 mutation that could be written blind. Introspection is the one query every GraphQL endpoint
 answers.
 
+## Send — a database connection
+
+| type | how | |
+|---|---|---|
+| `aws_db_instance` | `INSERT` into `hub_messages`, Postgres family | ✓ |
+
+**The one destination that is not an HTTPS request, so it has a port of its own.** A database is a
+TCP connection and a wire protocol, and `fetch` cannot stand in for it. `providers/sql.ts` is the
+port: the module asks for a connection by engine name, and a test hands it a driver that records
+instead of connecting.
+
+**The engine picks the driver, and the wire carries the engine.** `ENGINE` is exported by the
+catalog from the instance's own `engine`. Nothing is guessed from a port number (a Postgres on
+3306 is legal) and the RDS API is never called (it would need a permission the wire does not grant,
+and an endpoint inside the VPC). An engine with no driver — `mysql` today — is refused by name,
+and before the credential is read. Adding one is a driver file that registers itself and a line
+in `FAMILIES`; the module does not change.
+
+**The driver is `pg`, bundled, with no Lambda layer.** The part of a client that goes wrong is
+authentication (SCRAM-SHA-256), and the databases this reaches are private, so a mistake would
+surface one apply at a time. The bundler inlines `pg` as it does `aws4fetch`, and the function
+still ships one file. It takes the unminified bundle from 55 KiB to 241.
+
+**The credential is read from the managed secret on every send.** The generated policy grants
+`GetSecretValue` on exactly that secret. It is not cached (the secret rotates), not placed in an
+environment variable (the function's configuration is readable) and not quoted in any error.
+
+**The certificate authority is the Lambda runtime's own file.** From Node.js 20 on, Lambda does not
+trust the RDS certificate authority by default, and the documented fix is an environment variable
+Node reads at start-up. The driver reads `/var/runtime/ca-cert.pem` itself and hands it to the TLS
+connection. The connection is never downgraded to an unverified one.
+
+**One connection per send, with a five-second limit on each phase.** A function in a subnet with
+no route to the database does not fail, it waits, and the wait is billed up to the function's own
+timeout. Connection pooling belongs to the proxy, not to a warm container that holds a slot of a
+small instance.
+
+**Needs a route to the database and to Secrets Manager.** The function has to be in a subnet, and
+a subnet with no NAT reaches Secrets Manager only through an interface endpoint.
+
+Nothing here has run against a real database. The suite proves the logic over a fake driver; the
+handshake, the certificate chain and the table creation are the first things to read in the
+report after the first apply.
+
 ## Receive — event sources
 
 | type | arrives as | |
@@ -132,8 +176,8 @@ Not oversights. Each needs an answer before it can be written.
 
 | type | why | the question |
 |---|---|---|
-| `aws_db_instance`, `aws_rds_cluster` | SQL over TCP, not HTTP | ship a driver in the package, or leave databases to the container runtime? |
-| `aws_elasticache_replication_group` | Redis wire protocol over TCP | same question, and no serverless runtime can open a raw socket |
+| `aws_rds_cluster` | the catalog exports no endpoint, database or secret for it | export them as `aws_db_instance` does; its `aurora-postgresql` engine already has a driver |
+| `aws_elasticache_replication_group` | Redis wire protocol over TCP | a driver would have to be shipped, as it was for databases, and none is |
 | `aws_efs_access_point`, `aws_efs_file_system` | POSIX writes through a mount | only works where the filesystem is mounted; a Worker can never do it |
 | `aws_instance` | needs `ec2:DescribeInstances` to find the host | the generated policy does not grant it — change the wire's policy, or drop the type? |
 | `aws_ecs_task_definition`, `aws_service_discovery_service` | needs service discovery to resolve a target | same shape as the one above |

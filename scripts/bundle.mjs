@@ -73,6 +73,17 @@ try {
 		// the diagram put there is a use case, not an accident.
 		minify: false,
 		legalComments: 'none',
+		// A CommonJS dependency (`pg`) calls `require('events')` and friends, and an ES module has no
+		// `require`: esbuild's stand-in for it throws `Dynamic require of "events" is not supported` the
+		// moment the module loads. Measured, and not caught by running the bundle under `node -e`, which
+		// defines a global `require` and so makes the failure disappear. Giving the module its own
+		// `require` is the whole fix, and it is inert for a bundle with no CommonJS inside.
+		banner: {
+			js: "import { createRequire as __hubCreateRequire } from 'node:module'; const require = __hubCreateRequire(import.meta.url);",
+		},
+		// The optional compiled binding of `pg`. It is only reached through `pg.native`, which no module
+		// here asks for, and it needs a binary built for the runtime.
+		external: ['pg-native'],
 	});
 
 	const code = result.outputFiles[0].text;

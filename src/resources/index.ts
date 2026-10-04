@@ -11,6 +11,7 @@ import './aws_cloudwatch_event_bus/index.js';
 import './aws_cloudwatch_event_rule/index.js';
 import './aws_cloudwatch_log_group/index.js';
 import './aws_cognito_user_pool/index.js';
+import './aws_db_instance/index.js';
 import './aws_dynamodb_table/index.js';
 import './aws_kinesis_firehose_delivery_stream/index.js';
 import './aws_kinesis_stream/index.js';
@@ -25,4 +26,4 @@ import './aws_sqs_queue/index.js';
 import './aws_ssm_parameter/index.js';
 
 /** Every resource type this build knows about, in registration order. */
-export const BUNDLED: readonly string[] = [ "aws_api_gateway_rest_api", "aws_appsync_graphql_api", "aws_cloudfront_distribution", "aws_cloudwatch_event_bus", "aws_cloudwatch_event_rule", "aws_cloudwatch_log_group", "aws_cognito_user_pool", "aws_dynamodb_table", "aws_kinesis_firehose_delivery_stream", "aws_kinesis_stream", "aws_kinesis_video_stream", "aws_lambda_function", "aws_lambda_function_url", "aws_lb", "aws_s3_bucket", "aws_secretsmanager_secret", "aws_sns_topic", "aws_sqs_queue", "aws_ssm_parameter" ];
+export const BUNDLED: readonly string[] = [ "aws_api_gateway_rest_api", "aws_appsync_graphql_api", "aws_cloudfront_distribution", "aws_cloudwatch_event_bus", "aws_cloudwatch_event_rule", "aws_cloudwatch_log_group", "aws_cognito_user_pool", "aws_db_instance", "aws_dynamodb_table", "aws_kinesis_firehose_delivery_stream", "aws_kinesis_stream", "aws_kinesis_video_stream", "aws_lambda_function", "aws_lambda_function_url", "aws_lb", "aws_s3_bucket", "aws_secretsmanager_secret", "aws_sns_topic", "aws_sqs_queue", "aws_ssm_parameter" ];

@@ -20,6 +20,9 @@
 	],
 	"wired": [
 		"AWS_CLOUDWATCH_EVENT_BUS_NAME_0",
+		"AWS_DB_INSTANCE_DB_NAME_0",
+		"AWS_DB_INSTANCE_ENDPOINT_0",
+		"AWS_DB_INSTANCE_SECRET_ARN_0",
 		"AWS_DYNAMODB_TABLE_NAME_0",
 		"AWS_LAMBDA_FUNCTION_NAME_0",
 		"AWS_S3_BUCKET_NAME_0",
@@ -30,10 +33,7 @@
 	],
 	"ignored": {
 		"AWS_AUTOSCALING_GROUP_NAME_0": "infrastructure: a scaling group is not a destination for a message",
-		"AWS_DB_INSTANCE_DB_NAME_0": "blocked: SQL over TCP, see docs/coverage.md",
-		"AWS_DB_INSTANCE_ENDPOINT_0": "blocked: SQL over TCP",
-		"AWS_DB_INSTANCE_SECRET_ARN_0": "blocked: SQL over TCP",
-		"AWS_DB_INSTANCE_USER_NAME_0": "blocked: SQL over TCP",
+		"AWS_DB_INSTANCE_USER_NAME_0": "not a name: the value is a Secrets Manager reference (<arn>:username::, the form an ECS task reads); the module reads the username out of SECRET_ARN instead",
 		"AWS_EFS_ACCESS_POINT_NAME_0": "blocked: POSIX writes need the filesystem mounted",
 		"AWS_EFS_FILE_SYSTEM_ID_0": "blocked: POSIX writes need the filesystem mounted",
 		"AWS_KMS_KEY_NAME_0": "infrastructure: a key encrypts other wires, it receives nothing",

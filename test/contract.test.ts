@@ -70,11 +70,20 @@ test('a captured environment rebuilds exactly the wires it describes', () => {
 
 	const neighbors = discover(environment, VOCAB);
 
-	assert.equal(neighbors.length, fixture.wired.length, 'wrong number of neighbors rebuilt');
+	// A neighbor is a (type, label) pair and several variables of one wire merge into it: the
+	// database arrives as three names and is ONE neighbor, so counting names would call that a loss.
+	const wires = new Set(
+		fixture.wired.map((name) => {
+			const parsed = parseName(name, VOCAB)!;
+			return `${parsed.type}#${parsed.label}`;
+		})
+	);
+	assert.equal(neighbors.length, wires.size, 'wrong number of neighbors rebuilt');
 	assert.deepEqual(
 		neighbors.map((n) => n.type).sort(),
 		[
 			'aws_cloudwatch_event_bus',
+			'aws_db_instance',
 			'aws_dynamodb_table',
 			'aws_lambda_function',
 			'aws_s3_bucket',
