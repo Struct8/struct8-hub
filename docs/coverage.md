@@ -124,8 +124,10 @@ instead of connecting.
 catalog from the instance's own `engine`. Nothing is guessed from a port number (a Postgres on
 3306 is legal) and the RDS API is never called (it would need a permission the wire does not grant,
 and an endpoint inside the VPC). An engine with no driver — `mysql` today — is refused by name,
-and before the credential is read. Adding one is a driver file that registers itself and a line
-in `FAMILIES`; the module does not change.
+and before the credential is read. Another engine of a family that has a driver is one line in
+`FAMILIES`. A new family is also a driver file that registers itself, and the module's two
+statements in that family's SQL: they are written in Postgres (`$1` placeholders, `timestamptz`,
+`on conflict do nothing`), which MySQL does not accept.
 
 **The driver is `pg`, bundled, with no Lambda layer.** The part of a client that goes wrong is
 authentication (SCRAM-SHA-256), and the databases this reaches are private, so a mistake would

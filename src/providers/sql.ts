@@ -8,8 +8,10 @@
  *
  * Which protocol is a property of the ENGINE, and the engine is only known at run time: the same
  * `aws_db_instance` type is a Postgres in one diagram and a MySQL in the next. So the module asks
- * for a connection by engine name and this file picks the driver. A new engine is one driver file
- * that registers itself and one line in {@link FAMILIES}; the module does not change.
+ * for a connection by engine name and this file picks the driver. Another engine of a family that
+ * has a driver is one line in {@link FAMILIES}. A new family is also a driver file that registers
+ * itself, and the module's statements in that family's SQL: `aws_db_instance` writes Postgres
+ * (`$1` placeholders, `timestamptz`, `on conflict`), which a MySQL rejects.
  *
  * Drivers register themselves on import (`providers/postgres.ts`), and a resource module imports
  * the ones it can use. That is what keeps a function that is not wired to a database from carrying

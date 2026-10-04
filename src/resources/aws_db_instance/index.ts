@@ -13,6 +13,10 @@ import * as sql from '../../providers/sql.js';
  * (`receiver`) and what it said (`digest`): the last one is there because several items of one
  * batch can share a trace and a path, and without it the second would be dropped as a duplicate of
  * the first.
+ *
+ * Postgres SQL, as is the insert below: `$n` placeholders, `timestamptz`, `on conflict`. A family
+ * with another dialect (MySQL takes `?`, `insert ignore`, and no `text` column in a key) brings its
+ * own pair.
  */
 const CREATE_TABLE = `create table if not exists hub_messages (
 	trace      text        not null,
