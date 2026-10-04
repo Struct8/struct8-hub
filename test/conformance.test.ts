@@ -48,6 +48,8 @@ const complete = (type: string): Neighbor => ({
 		SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:111122223333:secret:the-resource',
 		DB_NAME: 'the-database',
 		ENGINE: 'postgres',
+		ENGINE_FAMILY: 'POSTGRESQL',
+		PORT: '5432',
 		REGION: 'us-east-1',
 		ACCOUNT: '111122223333',
 	},

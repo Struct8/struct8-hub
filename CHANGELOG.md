@@ -14,6 +14,13 @@ AWS account.
 
 ### Added
 
+- A workload can write to a database through an RDS Proxy. `aws_db_proxy` is the 21st module: it
+  writes the row an instance wire writes, into the database the proxy is connected to, logging in
+  with the secret the proxy checks its clients against. The engine family picks the driver, and a
+  proxy under IAM authentication, or connected to no database, is refused by name before any
+  secret is read. **Contract:** `PORT` and `ENGINE_FAMILY` are new keys, additive, so the
+  contract stays at version 1. The catalog must export them with `NAME`, `SECRET_ARN` and
+  `DB_NAME`; a diagram compiled before that is refused with a message that says so.
 - A workload can write to a database. `aws_db_instance` is the 20th module: it reads the master
   credential from the instance's managed secret and inserts the message into `hub_messages`,
   keyed so that a redelivery is one row. The driver is `pg`, bundled (no layer), chosen by the
@@ -112,6 +119,15 @@ AWS account.
   object — so a chain crossing a bus keeps its trace and its remaining hops instead of starting
   over with a full budget. The trace also rides the entry's `TraceHeader`, EventBridge's equivalent
   of the queue's system attribute, for the hop no HTTP header reaches.
+
+### Changed
+
+- A database connection trusts Node's certificate authorities as well as the Lambda runtime's
+  file, as `NODE_EXTRA_CA_CERTS` would. The file alone replaced them, and an RDS Proxy's
+  certificate comes from AWS Certificate Manager and chains to an Amazon Root CA, which is in
+  Node's list.
+- What a database module writes, and how it reads its credential, moved to
+  `providers/hubMessages.ts`, shared by the instance and the proxy.
 
 ### Fixed
 

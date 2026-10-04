@@ -6632,8 +6632,60 @@ register({
   }
 });
 
+// dist/providers/hubMessages.js
+var CREATE_TABLE = `create table if not exists hub_messages (
+	trace      text        not null,
+	path       text        not null,
+	receiver   text        not null,
+	digest     text        not null,
+	hops       integer     not null,
+	sent_at    timestamptz not null,
+	body       text        not null,
+	stored_at  timestamptz not null default now(),
+	primary key (trace, path, receiver, digest)
+)`;
+var INSERT = `insert into hub_messages (trace, path, receiver, digest, hops, sent_at, body)
+	values ($1, $2, $3, $4, $5, $6, $7)
+	on conflict do nothing`;
+var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+async function credentialsFrom(secretArn, region, fetchImpl) {
+  const answer = await json("secretsmanager", region, "secretsmanager.GetSecretValue", { SecretId: secretArn }, fetchImpl);
+  let parsed = null;
+  if (typeof answer?.SecretString === "string") {
+    try {
+      parsed = JSON.parse(answer.SecretString);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (typeof parsed?.username !== "string" || typeof parsed.password !== "string") {
+    throw new Error("the secret does not carry a username and a password as JSON");
+  }
+  return { user: parsed.username, password: parsed.password };
+}
+async function ensureTable(connection) {
+  try {
+    await connection.run(CREATE_TABLE);
+  } catch {
+    await connection.run(CREATE_TABLE);
+  }
+}
+async function store(connection, envelope, ctx) {
+  await ensureTable(connection);
+  await connection.run(INSERT, [
+    envelope.trace,
+    envelope.path.join(" > "),
+    ctx.self,
+    await sha256(envelope.body),
+    envelope.hops,
+    envelope.at,
+    envelope.body
+  ]);
+}
+
 // dist/providers/postgres.js
 import { readFileSync as readFileSync2 } from "node:fs";
+import { rootCertificates } from "node:tls";
 
 // node_modules/pg/esm/index.mjs
 var import_lib = __toESM(require_lib2(), 1);
@@ -6698,6 +6750,7 @@ function parseEndpoint(raw, engine) {
 
 // dist/providers/postgres.js
 var LAMBDA_CA_BUNDLE = "/var/runtime/ca-cert.pem";
+var trustedAuthorities = (bundle) => bundle ? [...rootCertificates, bundle] : void 0;
 var CONNECT_TIMEOUT_MS = 5e3;
 var STATEMENT_TIMEOUT_MS = 5e3;
 var authorities = () => {
@@ -6728,7 +6781,7 @@ function describe(err) {
 }
 var driver = {
   async connect(target, credentials2) {
-    const ca = authorities();
+    const ca = trustedAuthorities(authorities());
     const client2 = new esm_default.Client({
       host: target.host,
       port: target.port,
@@ -6768,61 +6821,12 @@ var driver = {
 useDriver("postgres", driver);
 
 // dist/resources/aws_db_instance/index.js
-var CREATE_TABLE = `create table if not exists hub_messages (
-	trace      text        not null,
-	path       text        not null,
-	receiver   text        not null,
-	digest     text        not null,
-	hops       integer     not null,
-	sent_at    timestamptz not null,
-	body       text        not null,
-	stored_at  timestamptz not null default now(),
-	primary key (trace, path, receiver, digest)
-)`;
-var INSERT = `insert into hub_messages (trace, path, receiver, digest, hops, sent_at, body)
-	values ($1, $2, $3, $4, $5, $6, $7)
-	on conflict do nothing`;
-var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-async function credentialsFrom(secretArn, region, fetchImpl) {
-  const answer = await json("secretsmanager", region, "secretsmanager.GetSecretValue", { SecretId: secretArn }, fetchImpl);
-  let parsed = null;
-  if (typeof answer?.SecretString === "string") {
-    try {
-      parsed = JSON.parse(answer.SecretString);
-    } catch {
-      parsed = null;
-    }
-  }
-  if (typeof parsed?.username !== "string" || typeof parsed.password !== "string") {
-    throw new Error("the secret does not carry a username and a password as JSON");
-  }
-  return { user: parsed.username, password: parsed.password };
-}
-async function ensureTable(connection) {
-  try {
-    await connection.run(CREATE_TABLE);
-  } catch {
-    await connection.run(CREATE_TABLE);
-  }
-}
-async function store(connection, envelope, ctx) {
-  await ensureTable(connection);
-  await connection.run(INSERT, [
-    envelope.trace,
-    envelope.path.join(" > "),
-    ctx.self,
-    await sha256(envelope.body),
-    envelope.hops,
-    envelope.at,
-    envelope.body
-  ]);
-}
 register({
   type: "aws_db_instance",
   keys: ["DB_NAME", "SECRET_ARN", "ENGINE"],
   capabilities: ["table"],
   /**
-   * Writes the message into `hub_messages`.
+   * Writes the message into `hub_messages` (providers/hubMessages.ts).
    *
    * WHICH DATABASE IS IT? The wire says: `ENGINE` is exported by the catalog from the instance's
    * own `engine`, so nothing is guessed from a port number (a Postgres on 3306 is legal) and the
@@ -6853,6 +6857,73 @@ register({
       throw new Error("no region for the database and none for the workload");
     assertSupported(engine);
     const { host, port } = parseEndpoint(endpoint2, engine);
+    const credentials2 = await credentialsFrom(secretArn, region, ctx.fetch);
+    const connection = await connect(engine, { host, port, database }, credentials2);
+    try {
+      await store(connection, envelope, ctx);
+    } finally {
+      await connection.close();
+    }
+  }
+});
+
+// dist/resources/aws_db_proxy/index.js
+var ENGINE_OF_FAMILY = {
+  POSTGRESQL: "postgres",
+  MYSQL: "mysql",
+  SQLSERVER: "sqlserver"
+};
+register({
+  type: "aws_db_proxy",
+  // `ENGINE_FAMILY` starts with `ENGINE`, the instance's key. Keys match longest first, so a proxy's
+  // variable reads as the family; the cost is an instance wire whose label starts with `FAMILY_`,
+  // which would read as a family too.
+  keys: ["PORT", "ENGINE_FAMILY", "SECRET_ARN", "DB_NAME"],
+  capabilities: ["table"],
+  /**
+   * Writes the message into `hub_messages` (providers/hubMessages.ts) through the proxy: the table
+   * and the row an `aws_db_instance` wire writes, because the proxy is a way into that database and
+   * not a database of its own.
+   *
+   * WHAT THE WIRE CARRIES. ENDPOINT is the proxy's host alone, and PORT is fixed by the engine
+   * family, not by the database. ENGINE_FAMILY picks the driver, as ENGINE does for the instance.
+   * SECRET_ARN is the secret of the proxy's first auth entry: under Secrets Manager authentication
+   * the proxy checks a client's user name and password against its secrets, so the secret it logs
+   * in to the database with is also the one a client logs in to it with, and the generated policy
+   * grants the workload `GetSecretValue` on it. DB_NAME comes from the database the proxy fronts:
+   * the proxy keeps no database name of its own.
+   *
+   * The certificate is the one difference in the handshake, and the driver absorbs it: a proxy's
+   * comes from AWS Certificate Manager (`trustedAuthorities`, providers/postgres.ts).
+   *
+   * Every refusal comes before the secret is read.
+   */
+  async send(n, envelope, ctx) {
+    const endpoint2 = n.props["ENDPOINT"];
+    if (!endpoint2)
+      throw new Error("no endpoint on the wire");
+    const family = n.props["ENGINE_FAMILY"];
+    if (!family) {
+      throw new Error("no engine family on the wire: the diagram was compiled before the proxy exported it, compile it again");
+    }
+    const engine = ENGINE_OF_FAMILY[family.trim().toUpperCase()];
+    if (!engine)
+      throw new Error(`${JSON.stringify(family)} is not an RDS Proxy engine family`);
+    const secretArn = n.props["SECRET_ARN"];
+    if (!secretArn) {
+      throw new Error("no secret on the wire: the proxy uses IAM authentication, which this build does not support");
+    }
+    const database = n.props["DB_NAME"];
+    if (!database) {
+      throw new Error("no database name on the wire: the proxy is connected to no database, or the database has no name");
+    }
+    const region = ctx.region(n);
+    if (!region)
+      throw new Error("no region for the proxy and none for the workload");
+    assertSupported(engine);
+    const { host, port: fromEndpoint } = parseEndpoint(endpoint2, engine);
+    const portOnWire = n.props["PORT"];
+    const port = portOnWire ? parseEndpoint(`${host}:${portOnWire}`, engine).port : fromEndpoint;
     const credentials2 = await credentialsFrom(secretArn, region, ctx.fetch);
     const connection = await connect(engine, { host, port, database }, credentials2);
     try {

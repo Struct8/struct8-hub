@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { rootCertificates } from 'node:tls';
 import pg from 'pg';
 
 import { useDriver, type Connection, type Credentials, type Driver, type Target } from './sql.js';
@@ -25,8 +26,8 @@ import { useDriver, type Connection, type Credentials, type Driver, type Target 
  * FROM NODE.JS 20 ON, LAMBDA NO LONGER TRUSTS THE RDS CERTIFICATE AUTHORITY BY DEFAULT. The file
  * is in the runtime, and the documented way to use it is to set `NODE_EXTRA_CA_CERTS` to it — an
  * environment variable Node reads when the process starts, which a function cannot set for itself.
- * Reading the file and handing it to the TLS connection does the same job from here, and needs no
- * setting in the diagram.
+ * Reading the file here does the same job (see `trustedAuthorities`), and needs no setting in the
+ * diagram.
  *
  * Where the file is absent — a container, a laptop — the platform's own trust store applies, and a
  * database whose certificate it does not know fails with a message that says so (see `describe`).
@@ -35,6 +36,20 @@ import { useDriver, type Connection, type Credentials, type Driver, type Target 
  * password is sent to it.
  */
 const LAMBDA_CA_BUNDLE = '/var/runtime/ca-cert.pem';
+
+/**
+ * What a connection trusts, given the Lambda bundle when there is one: Node's own list AND the
+ * bundle, which is what `NODE_EXTRA_CA_CERTS` does — the variable ADDS the file to the list.
+ *
+ * Handing the file alone to the connection REPLACES the list instead, and that is how this worked
+ * until an RDS Proxy was wired. An instance's certificate is issued by the RDS authority, which is
+ * in the file. A proxy's comes from AWS Certificate Manager and chains to an Amazon Root CA, which
+ * is in Node's list. Both, then, as the variable would have it.
+ *
+ * `undefined` without a bundle, which leaves Node's defaults in place.
+ */
+export const trustedAuthorities = (bundle: string | undefined): string[] | undefined =>
+	bundle ? [...rootCertificates, bundle] : undefined;
 
 /**
  * How long to wait for each phase, in milliseconds.
@@ -90,7 +105,7 @@ function describe(err: unknown): Error {
 
 const driver: Driver = {
 	async connect(target: Target, credentials: Credentials): Promise<Connection> {
-		const ca = authorities();
+		const ca = trustedAuthorities(authorities());
 
 		const client = new pg.Client({
 			host: target.host,

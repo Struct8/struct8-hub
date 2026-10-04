@@ -43,7 +43,11 @@ const ROOTS = [
 // A Lambda writes `AWS_SQS_QUEUE_NAME_0 = "x"`. An ECS task definition writes the same name inside
 // a container definition, as `{ name = "AWS_SQS_QUEUE_NAME_0", value = "x" }`. Both are the
 // generator emitting this contract, and reading only the first shape misses every container.
-const DIRECT = /^[ \t]*([A-Z][A-Z0-9_]{2,})[ \t]*=[ \t]*"/gm;
+//
+// The value is not always a string. A value that is a single reference is written bare
+// (`AWS_DB_PROXY_NAME_0 = aws_db_proxy.app.name`), and so is a function call (`tolist(...)[0]`), so
+// anything but a second `=` counts.
+const DIRECT = /^[ \t]*([A-Z][A-Z0-9_]{2,})[ \t]*=[ \t]*[^\s=]/gm;
 const CONTAINER = /name[ \t]*=[ \t]*"([A-Z][A-Z0-9_]{2,})"/g;
 const JSON_KEY = /"([A-Z][A-Z0-9_]{2,})"[ \t]*:/g;
 

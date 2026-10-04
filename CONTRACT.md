@@ -76,11 +76,16 @@ reached is a silent failure: the variable parses, a neighbor appears, and nothin
 | `USER_NAME` | database user |
 | `DB_NAME` | database name |
 | `ENGINE` | the database engine, as the provider names it: `postgres`, `mysql`, `aurora-postgresql` |
+| `ENGINE_FAMILY` | the protocol an RDS Proxy speaks, as the provider names it: `POSTGRESQL`, `MYSQL`, `SQLSERVER` |
+| `PORT` | the port to connect to, where `ENDPOINT` is the host alone (an RDS Proxy) |
 | `REGION` | the target's region — **emitted only when it differs from the source's** |
 | `ACCOUNT` | the target's account — **emitted only when it differs from the source's** |
 
 New keys come from the target's own resource definition. A target that declares nothing gets
 `NAME` alone, carrying its logical name.
+
+`ENGINE_FAMILY` starts with `ENGINE`, and §2 reads the longer key first. The cost is a variable of
+an instance whose label starts with `FAMILY_`, which is read as a family too.
 
 Note the consequence of the two conditional keys: **absence means "same as mine"**, not "unknown".
 A consumer that treats a missing `REGION` as an error will break on the common case.

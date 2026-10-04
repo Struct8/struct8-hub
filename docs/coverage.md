@@ -8,10 +8,12 @@ with no data plane.
 That count is not fixed: it is the catalog's, and the catalog moves. `aws_cloudwatch_event_bus`
 joined it on 2026-09-26, when a connection from a compute node to a bus was added — until then no
 workload could be wired to one, so no variable was emitted and there was nothing to reach.
+`aws_db_proxy` joined it on 2026-10-03 the same way, when a compute node could be connected to a
+proxy as it is to the database behind it.
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 16 send targets and 12 event sources across 20
+**Every applicable AWS resource is implemented**: 17 send targets and 12 event sources across 21
 modules. What remains is the five below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
@@ -26,8 +28,8 @@ targets. It is not.
 
 The core fans out to whatever neighbor list it is given, and that behavior is tested once. What a
 resource contributes is at most two small functions: how to send to it, and how to read an event
-from it. So coverage is **sources + targets**, not their product — twenty-seven small functions,
-not a hundred and eighty combinations.
+from it. So coverage is **sources + targets**, not their product — twenty-nine small functions,
+not two hundred and four combinations.
 
 The part of the matrix that does need asserting is that the sources stay distinct, and the
 conformance suite does it: every fixture is offered to every receiver, and exactly one must claim
@@ -114,6 +116,7 @@ answers.
 | type | how | |
 |---|---|---|
 | `aws_db_instance` | `INSERT` into `hub_messages`, Postgres family | ✓ |
+| `aws_db_proxy` | the same `INSERT`, through the proxy — see below | ✓ |
 
 **The one destination that is not an HTTPS request, so it has a port of its own.** A database is a
 TCP connection and a wire protocol, and `fetch` cannot stand in for it. `providers/sql.ts` is the
@@ -138,10 +141,28 @@ still ships one file. It takes the unminified bundle from 55 KiB to 241.
 `GetSecretValue` on exactly that secret. It is not cached (the secret rotates), not placed in an
 environment variable (the function's configuration is readable) and not quoted in any error.
 
-**The certificate authority is the Lambda runtime's own file.** From Node.js 20 on, Lambda does not
-trust the RDS certificate authority by default, and the documented fix is an environment variable
-Node reads at start-up. The driver reads `/var/runtime/ca-cert.pem` itself and hands it to the TLS
-connection. The connection is never downgraded to an unverified one.
+**The certificate authorities are Node's own plus the Lambda runtime's file.** From Node.js 20 on,
+Lambda does not trust the RDS certificate authority by default, and the documented fix is an
+environment variable, `NODE_EXTRA_CA_CERTS`, that Node reads at start-up. The driver reads
+`/var/runtime/ca-cert.pem` itself and adds it to the authorities Node already trusts, as the
+variable does. Handing the file alone to the connection would replace them instead, and an RDS
+Proxy's certificate comes from AWS Certificate Manager and chains to an Amazon Root CA, which is in
+Node's list. The connection is never downgraded to an unverified one.
+
+**A proxy is a way into a database, not a database of its own.** `aws_db_proxy` writes the same row
+into the same table; what differs is how the wire says where to connect. `ENDPOINT` is the proxy's
+host alone, and `PORT` is fixed by its engine family. `ENGINE_FAMILY` (`POSTGRESQL`, `MYSQL`,
+`SQLSERVER`) picks the driver, as `ENGINE` does for an instance. `DB_NAME` is the name of the
+database the proxy is connected to, because the proxy keeps none of its own: a proxy connected to
+no database is refused by name.
+
+`SECRET_ARN` is the secret of the proxy's first `auth` entry. Under Secrets Manager authentication
+the proxy checks a client's user name and password against its secrets, so the secret the proxy
+logs in to the database with is also the one a client logs in to the proxy with, and the generated
+policy grants the workload `GetSecretValue` on it. A proxy with `default_auth_scheme = IAM_AUTH`
+exports no secret and is refused by name: a client there presents an IAM token, which this build
+does not produce. A gap remains: an `auth` entry with `iam_auth = REQUIRED` still exports its
+secret, and the proxy refuses the password at login.
 
 **One connection per send, with a five-second limit on each phase.** A function in a subnet with
 no route to the database does not fail, it waits, and the wait is billed up to the function's own
@@ -151,9 +172,11 @@ small instance.
 **Needs a route to the database and to Secrets Manager.** The function has to be in a subnet, and
 a subnet with no NAT reaches Secrets Manager only through an interface endpoint.
 
-Nothing here has run against a real database. The suite proves the logic over a fake driver; the
-handshake, the certificate chain and the table creation are the first things to read in the
-report after the first apply.
+The instance path has run against a real database: on 2026-10-04 a function connected to a
+Postgres instance reported its hop as delivered (`ok: true`) every minute, in about 100 ms. Nothing
+has run against a real proxy yet. The suite proves the logic over a fake driver; the handshake with
+the proxy and its certificate chain are the first things to read in the report after the first
+apply.
 
 ## Receive — event sources
 
