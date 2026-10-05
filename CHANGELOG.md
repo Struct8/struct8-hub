@@ -14,6 +14,21 @@ AWS account.
 
 ### Added
 
+- A workload can write to a DocumentDB cluster. `aws_docdb_cluster` is the 24th module: the message
+  becomes a document of `hub.hub_messages` — the record a database row carries, its identity as
+  `_id`, so a redelivery (duplicate key, 11000) is not a second document — written over the MongoDB
+  wire protocol, which `providers/mongo.ts` speaks by hand: BSON (`providers/bson.ts`), one OP_MSG
+  per command, and a SCRAM-SHA-256 or SCRAM-SHA-1 login, as `isMaster` says the user has, that also
+  checks the server's signature. The exchange is checked against RFC 5802, RFC 7677 and the example
+  of the MongoDB authentication specification, message for message. It logs in as the master user,
+  from the secret DocumentDB manages, over TLS verified against the Amazon RDS authorities. The
+  catalog exports `ENDPOINT`, `PORT` and `SECRET_ARN` since 2026-10-05; before that no compute could
+  be connected to a cluster.
+- The container image trusts the Amazon RDS certificate authorities: it fetches the RDS bundle
+  when it is built and sets `NODE_EXTRA_CA_CERTS` to it. Without it, a container could not verify
+  the certificate of an RDS database, an Aurora cluster or a DocumentDB cluster. What a connection
+  trusts moved from `providers/postgres.ts` to `providers/rdsCa.ts`, shared by both drivers, and
+  the failure now says what to do in a container too.
 - A workload can index into an OpenSearch domain. `aws_opensearch_domain` is the 23rd module: the
   message becomes a document of `hub_messages` — the fields a database row carries, through the new
   `providers/record.ts`, plus the time it was stored — at `PUT /hub_messages/_create/<id>`, signed

@@ -24,6 +24,18 @@ FROM node:22-alpine
 USER node
 WORKDIR /app
 
+# The Amazon RDS certificate authorities, which issue the certificate of every RDS database, Aurora
+# cluster and DocumentDB cluster. Node does not trust them by default, so without them a connection
+# to any of those fails to verify. NODE_EXTRA_CA_CERTS is read when the process starts and ADDS the
+# file to the authorities Node already trusts, which is what the Hub does with the Lambda runtime's
+# copy (src/providers/rdsCa.ts).
+#
+# Fetched when the image is built, from the address the RDS and DocumentDB guides give, so a region
+# AWS adds later is in the next image with no change here. Owned by `node` because a file ADD
+# fetches is mode 600, and Node skips an unreadable bundle with only a warning.
+ADD --chown=node:node https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-global-bundle.pem
+ENV NODE_EXTRA_CA_CERTS=/app/rds-global-bundle.pem
+
 COPY --chown=node:node index.mjs ./index.mjs
 
 # The default the runtime listens on. It must match `containerPort` in the task definition and the

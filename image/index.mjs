@@ -400,8 +400,8 @@ var require_textParsers = __commonJS({
       if (!value) return null;
       return array.parse(value, parseBool);
     }
-    function parseBaseTenInt(string) {
-      return parseInt(string, 10);
+    function parseBaseTenInt(string2) {
+      return parseInt(string2, 10);
     }
     function parseIntegerArray(value) {
       if (!value) return null;
@@ -1206,7 +1206,7 @@ var require_utils2 = __commonJS({
     var nodeCrypto = __require("crypto");
     module.exports = {
       postgresMd5PasswordHash,
-      randomBytes,
+      randomBytes: randomBytes2,
       deriveKey,
       sha256: sha2562,
       hashByName,
@@ -1216,14 +1216,14 @@ var require_utils2 = __commonJS({
     var webCrypto = nodeCrypto.webcrypto || globalThis.crypto;
     var subtleCrypto = webCrypto.subtle;
     var textEncoder = new TextEncoder();
-    function randomBytes(length) {
+    function randomBytes2(length) {
       return webCrypto.getRandomValues(Buffer.alloc(length));
     }
-    async function md5(string) {
+    async function md5(string2) {
       try {
-        return nodeCrypto.createHash("md5").update(string, "utf-8").digest("hex");
+        return nodeCrypto.createHash("md5").update(string2, "utf-8").digest("hex");
       } catch (e) {
-        const data = typeof string === "string" ? textEncoder.encode(string) : string;
+        const data = typeof string2 === "string" ? textEncoder.encode(string2) : string2;
         const hash2 = await subtleCrypto.digest("MD5", data);
         return Array.from(new Uint8Array(hash2)).map((b) => b.toString(16).padStart(2, "0")).join("");
       }
@@ -1233,11 +1233,11 @@ var require_utils2 = __commonJS({
       const outer = await md5(Buffer.concat([Buffer.from(inner), salt]));
       return "md5" + outer;
     }
-    async function sha2562(text) {
-      return await subtleCrypto.digest("SHA-256", text);
+    async function sha2562(text2) {
+      return await subtleCrypto.digest("SHA-256", text2);
     }
-    async function hashByName(hashName, text) {
-      return await subtleCrypto.digest(hashName, text);
+    async function hashByName(hashName, text2) {
+      return await subtleCrypto.digest(hashName, text2);
     }
     async function hmacSha256(keyBuffer, msg) {
       const key = await subtleCrypto.importKey("raw", keyBuffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -1370,7 +1370,7 @@ var require_sasl = __commonJS({
     "use strict";
     var crypto2 = require_utils2();
     var { signatureAlgorithmHashFromCertificate } = require_cert_signatures();
-    function saslprep(password) {
+    function saslprep2(password) {
       const nonAsciiSpace = /[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000]/g;
       const mappedToNothing = /[\u00AD\u034F\u1806\u180B\u180C\u180D\u200C\u200D\u2060\uFE00-\uFE0F\uFEFF]/g;
       return password.replace(nonAsciiSpace, " ").replace(mappedToNothing, "").normalize("NFKC");
@@ -1435,7 +1435,7 @@ var require_sasl = __commonJS({
       const clientFinalMessageWithoutProof = "c=" + channelBinding + ",r=" + sv.nonce;
       const authMessage = clientFirstMessageBare + "," + serverFirstMessage + "," + clientFinalMessageWithoutProof;
       const saltBytes = Buffer.from(sv.salt, "base64");
-      const saltedPassword = await crypto2.deriveKey(saslprep(password), saltBytes, sv.iteration);
+      const saltedPassword = await crypto2.deriveKey(saslprep2(password), saltBytes, sv.iteration);
       const clientKey = await crypto2.hmacSha256(saltedPassword, "Client Key");
       const storedKey = await crypto2.sha256(clientKey);
       const clientSignature = await crypto2.hmacSha256(storedKey, authMessage);
@@ -1458,21 +1458,21 @@ var require_sasl = __commonJS({
         throw new Error("SASL: SCRAM-SERVER-FINAL-MESSAGE: server signature does not match");
       }
     }
-    function isPrintableChars(text) {
-      if (typeof text !== "string") {
+    function isPrintableChars(text2) {
+      if (typeof text2 !== "string") {
         throw new TypeError("SASL: text must be a string");
       }
-      return text.split("").map((_, i) => text.charCodeAt(i)).every((c) => c >= 33 && c <= 43 || c >= 45 && c <= 126);
+      return text2.split("").map((_, i) => text2.charCodeAt(i)).every((c) => c >= 33 && c <= 43 || c >= 45 && c <= 126);
     }
-    function isBase64(text) {
-      return /^(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/.test(text);
+    function isBase64(text2) {
+      return /^(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/.test(text2);
     }
-    function parseAttributePairs(text) {
-      if (typeof text !== "string") {
+    function parseAttributePairs(text2) {
+      if (typeof text2 !== "string") {
         throw new TypeError("SASL: attribute pairs text must be a string");
       }
       return new Map(
-        text.split(",").map((attrValue) => {
+        text2.split(",").map((attrValue) => {
           if (!/^.=/.test(attrValue)) {
             throw new Error("SASL: Invalid attribute pair entry");
           }
@@ -2354,9 +2354,9 @@ var require_messages = __commonJS({
     };
     exports.ReadyForQueryMessage = ReadyForQueryMessage;
     var CommandCompleteMessage = class {
-      constructor(length, text) {
+      constructor(length, text2) {
         this.length = length;
-        this.text = text;
+        this.text = text2;
         this.name = "commandComplete";
       }
     };
@@ -2417,22 +2417,22 @@ var require_buffer_writer = __commonJS({
         this.buffer[this.offset++] = num >>> 0 & 255;
         return this;
       }
-      addCString(string) {
-        if (!string) {
+      addCString(string2) {
+        if (!string2) {
           this.ensure(1);
         } else {
-          const len = Buffer.byteLength(string);
+          const len = Buffer.byteLength(string2);
           this.ensure(len + 1);
-          this.buffer.write(string, this.offset, "utf-8");
+          this.buffer.write(string2, this.offset, "utf-8");
           this.offset += len;
         }
         this.buffer[this.offset++] = 0;
         return this;
       }
-      addString(string = "") {
-        const len = Buffer.byteLength(string);
+      addString(string2 = "") {
+        const len = Buffer.byteLength(string2);
         this.ensure(len);
-        this.buffer.write(string, this.offset);
+        this.buffer.write(string2, this.offset);
         this.offset += len;
         return this;
       }
@@ -2442,8 +2442,8 @@ var require_buffer_writer = __commonJS({
       // `addInt32(Buffer.byteLength(s)).addString(s)` pairing scanned the string
       // three times (byteLength for the prefix, byteLength again inside addString,
       // then the encode), which is costly for large text parameters.
-      addInt32PrefixedString(string) {
-        const len = Buffer.byteLength(string);
+      addInt32PrefixedString(string2) {
+        const len = Buffer.byteLength(string2);
         this.ensure(4 + len);
         const buffer = this.buffer;
         let offset = this.offset;
@@ -2451,7 +2451,7 @@ var require_buffer_writer = __commonJS({
         buffer[offset++] = len >>> 16 & 255;
         buffer[offset++] = len >>> 8 & 255;
         buffer[offset++] = len >>> 0 & 255;
-        buffer.write(string, offset, "utf-8");
+        buffer.write(string2, offset, "utf-8");
         this.offset = offset + len;
         return this;
       }
@@ -2537,8 +2537,8 @@ var require_serializer = __commonJS({
         /* code.startup */
       );
     };
-    var query2 = (text) => {
-      return writer.addCString(text).flush(
+    var query2 = (text2) => {
+      return writer.addCString(text2).flush(
         81
         /* code.query */
       );
@@ -2633,13 +2633,13 @@ var require_serializer = __commonJS({
       buffer.writeInt32BE(secretKey, 12);
       return buffer;
     };
-    var cstringMessage = (code, string) => {
-      const stringLen = Buffer.byteLength(string);
+    var cstringMessage = (code, string2) => {
+      const stringLen = Buffer.byteLength(string2);
       const len = 4 + stringLen + 1;
       const buffer = Buffer.allocUnsafe(1 + len);
       buffer[0] = code;
       buffer.writeInt32BE(len, 1);
-      buffer.write(string, 5, "utf-8");
+      buffer.write(string2, 5, "utf-8");
       buffer[len] = 0;
       return buffer;
     };
@@ -2655,8 +2655,8 @@ var require_serializer = __commonJS({
       return msg.name ? cstringMessage(68, `${msg.type}${msg.name || ""}`) : msg.type === "P" ? emptyDescribePortal : emptyDescribeStatement;
     };
     var close = (msg) => {
-      const text = `${msg.type}${msg.name || ""}`;
-      return cstringMessage(67, text);
+      const text2 = `${msg.type}${msg.name || ""}`;
+      return cstringMessage(67, text2);
     };
     var copyData = (chunk) => {
       return writer.add(chunk).flush(
@@ -2928,8 +2928,8 @@ var require_parser = __commonJS({
       return new messages_1.ReadyForQueryMessage(LATEINIT_LENGTH, status);
     };
     var parseCommandCompleteMessage = (reader) => {
-      const text = reader.cstring();
-      return new messages_1.CommandCompleteMessage(LATEINIT_LENGTH, text);
+      const text2 = reader.cstring();
+      return new messages_1.CommandCompleteMessage(LATEINIT_LENGTH, text2);
     };
     var parseCopyData = (reader, length) => {
       const chunk = reader.bytes(length - 4);
@@ -3130,8 +3130,8 @@ var require_stream = __commonJS({
         return new net.Socket();
       }
       function getSecureStream2(options) {
-        const tls = __require("tls");
-        return tls.connect(options);
+        const tls2 = __require("tls");
+        return tls2.connect(options);
       }
       return {
         getStream: getStream2,
@@ -3316,8 +3316,8 @@ var require_connection = __commonJS({
         }
         return this.stream.write(buffer);
       }
-      query(text) {
-        this._send(serialize.query(text));
+      query(text2) {
+        this._send(serialize.query(text2));
       }
       // send parse message
       parse(query2) {
@@ -4712,9 +4712,9 @@ var require_pg_pool = __commonJS({
         this._idle.push(new IdleItem(client2, idleListener, tid));
         this._pulseQueue();
       }
-      query(text, values, cb) {
-        if (typeof text === "function") {
-          const response2 = promisify(this.Promise, text);
+      query(text2, values, cb) {
+        if (typeof text2 === "function") {
+          const response2 = promisify(this.Promise, text2);
           setImmediate(function() {
             return response2.callback(new Error("Passing a function as the first parameter to pool.query is not supported"));
           });
@@ -4742,7 +4742,7 @@ var require_pg_pool = __commonJS({
           client2.once("error", onError);
           this.log("dispatching query");
           try {
-            client2.query(text, values, (err2, res) => {
+            client2.query(text2, values, (err2, res) => {
               this.log("query dispatched");
               client2.removeListener("error", onError);
               if (clientReleased) {
@@ -5488,12 +5488,12 @@ function vocabulary() {
 
 // dist/core/report.js
 var reason = (err) => {
-  let text;
+  let text2;
   if (err instanceof Error)
-    text = err.name === "Error" ? err.message : `${err.name}: ${err.message}`;
+    text2 = err.name === "Error" ? err.message : `${err.name}: ${err.message}`;
   else
-    text = String(err);
-  return text.length <= 300 ? text : text.slice(0, 300) + "\u2026";
+    text2 = String(err);
+  return text2.length <= 300 ? text2 : text2.slice(0, 300) + "\u2026";
 };
 var Trail = class {
   trace;
@@ -5836,7 +5836,7 @@ var AwsV4Signer = class {
     return hashHeader;
   }
 };
-async function hmac(key, string) {
+async function hmac(key, string2) {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     typeof key === "string" ? encoder.encode(key) : key,
@@ -5844,7 +5844,7 @@ async function hmac(key, string) {
     false,
     ["sign"]
   );
-  return crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(string));
+  return crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(string2));
 }
 async function hash(content) {
   return crypto.subtle.digest("SHA-256", typeof content === "string" ? encoder.encode(content) : content);
@@ -5992,8 +5992,8 @@ async function json(service, region, target, body, fetchImpl = fetch) {
     headers: { "content-type": `application/x-amz-json-${dialect}`, "x-amz-target": target },
     body: JSON.stringify(body)
   }, target, fetchImpl);
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  const text2 = await res.text();
+  return text2 ? JSON.parse(text2) : null;
 }
 async function query(service, region, params, fetchImpl = fetch) {
   await send(endpoint(service, region), service, region, {
@@ -6013,8 +6013,8 @@ async function plain(url, init, what, fetchImpl = fetch) {
     throw new Error(`HTTP ${res.status} on ${what}`);
   return res;
 }
-var b64 = (text) => {
-  const bytes = new TextEncoder().encode(text);
+var b64 = (text2) => {
+  const bytes = new TextEncoder().encode(text2);
   let binary = "";
   for (const byte of bytes)
     binary += String.fromCharCode(byte);
@@ -6243,12 +6243,12 @@ var PayloadTooLarge = class extends Error {
   }
 };
 function respond(res, status, payload) {
-  const text = JSON.stringify(payload);
+  const text2 = JSON.stringify(payload);
   res.writeHead(status, {
     "content-type": "application/json",
-    "content-length": Buffer.byteLength(text)
+    "content-length": Buffer.byteLength(text2)
   });
-  res.end(text);
+  res.end(text2);
 }
 function runLoadtestPrimary(count, opts) {
   const env = environment();
@@ -6796,7 +6796,7 @@ async function open2(engine, target, login, region, fetchImpl, options) {
   }
   const user = named2;
   const withToken = async () => connect(engine, target, { user, password: await authToken(target.host, target.port, user, region) }, options);
-  const explained2 = (err) => {
+  const explained3 = (err) => {
     const code = codeOf(err);
     if (code !== NOT_AN_IAM_USER && code !== TOKEN_REFUSED)
       return err;
@@ -6809,18 +6809,18 @@ async function open2(engine, target, login, region, fetchImpl, options) {
     return await withToken();
   } catch (err) {
     if (codeOf(err) !== NOT_AN_IAM_USER || login.proxy || !login.secretArn)
-      throw explained2(err);
+      throw explained3(err);
   }
   await provisionIamUser(engine, target, user, login.secretArn, region, fetchImpl, options);
   try {
     return await withToken();
   } catch (err) {
-    throw explained2(err);
+    throw explained3(err);
   }
 }
 
 // dist/providers/record.js
-var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+var sha256 = async (text2) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text2)))].map((b) => b.toString(16).padStart(2, "0")).join("");
 async function recordOf(envelope, ctx) {
   const trace = envelope.trace;
   const path = envelope.path.join(" > ");
@@ -6940,10 +6940,6 @@ async function write(engine, target, login, region, envelope, ctx, options) {
   await once();
 }
 
-// dist/providers/postgres.js
-import { readFileSync as readFileSync2 } from "node:fs";
-import { rootCertificates } from "node:tls";
-
 // node_modules/pg/esm/index.mjs
 var import_lib = __toESM(require_lib2(), 1);
 var Client = import_lib.default.Client;
@@ -6959,19 +6955,18 @@ var TypeOverrides = import_lib.default.TypeOverrides;
 var defaults = import_lib.default.defaults;
 var esm_default = import_lib.default;
 
-// dist/providers/postgres.js
+// dist/providers/rdsCa.js
+import { readFileSync as readFileSync2 } from "node:fs";
+import { rootCertificates } from "node:tls";
 var LAMBDA_CA_BUNDLE = "/var/runtime/ca-cert.pem";
-var trustedAuthorities = (bundle) => bundle ? [...rootCertificates, bundle] : void 0;
-var CONNECT_TIMEOUT_MS = 5e3;
-var QUERY_TIMEOUT_MS = 5e3;
-var CONNECT_TIMEOUT_MESSAGE = "timeout expired";
-var authorities = () => {
+function lambdaBundle() {
   try {
     return readFileSync2(LAMBDA_CA_BUNDLE, "utf8");
   } catch {
     return void 0;
   }
-};
+}
+var trustedAuthorities = (bundle) => bundle ? [...rootCertificates, bundle] : void 0;
 var UNTRUSTED = /* @__PURE__ */ new Set([
   "SELF_SIGNED_CERT_IN_CHAIN",
   "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -6979,6 +6974,12 @@ var UNTRUSTED = /* @__PURE__ */ new Set([
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
   "CERT_HAS_EXPIRED"
 ]);
+var UNTRUSTED_HINT = "the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem, and in a container NODE_EXTRA_CA_CERTS has to name the RDS bundle, as image/Dockerfile does";
+
+// dist/providers/postgres.js
+var CONNECT_TIMEOUT_MS = 5e3;
+var QUERY_TIMEOUT_MS = 5e3;
+var CONNECT_TIMEOUT_MESSAGE = "timeout expired";
 function describe(err, waitedMs = CONNECT_TIMEOUT_MS) {
   const e = err ?? {};
   const code = typeof e.code === "string" ? e.code : "";
@@ -6986,7 +6987,7 @@ function describe(err, waitedMs = CONNECT_TIMEOUT_MS) {
   const fromServer = err instanceof esm_default.DatabaseError;
   let hint = "";
   if (UNTRUSTED.has(code)) {
-    hint = " (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)";
+    hint = ` (${UNTRUSTED_HINT})`;
   } else if (!fromServer && (code === "ETIMEDOUT" || message === CONNECT_TIMEOUT_MESSAGE)) {
     hint = waitedMs > CONNECT_TIMEOUT_MS ? ` (no answer in ${Math.round(waitedMs / 1e3)} s: the function has to be in a subnet that can reach the database, or the database took longer than that to resume from a pause)` : " (the function has to be in a subnet that can reach the database)";
   }
@@ -7007,7 +7008,7 @@ var clientConfig = (target, credentials2, ca, connectTimeoutMs = CONNECT_TIMEOUT
 var driver = {
   async connect(target, credentials2, options) {
     const waitMs = options?.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
-    const client2 = new esm_default.Client(clientConfig(target, credentials2, trustedAuthorities(authorities()), waitMs));
+    const client2 = new esm_default.Client(clientConfig(target, credentials2, trustedAuthorities(lambdaBundle()), waitMs));
     client2.on("error", () => {
     });
     try {
@@ -7018,9 +7019,9 @@ var driver = {
       throw describe(err, waitMs);
     }
     return {
-      async run(text, params = []) {
+      async run(text2, params = []) {
         try {
-          await client2.query(text, [...params]);
+          await client2.query(text2, [...params]);
         } catch (err) {
           throw describe(err);
         }
@@ -7149,6 +7150,737 @@ register({
     const port = portOnWire ? parseEndpoint(`${host}:${portOnWire}`, engine).port : fromEndpoint;
     const iamRequired = (n.props["IAM_AUTH"] ?? "").trim().toUpperCase() === "REQUIRED";
     await write(engine, { host, port, database }, { secretArn, iamUser, proxy: true, iamUserInSecret: iamRequired }, region, envelope, ctx);
+  }
+});
+
+// dist/providers/mongo.js
+import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
+import * as tls from "node:tls";
+
+// dist/providers/bson.js
+var utf8 = new TextEncoder();
+var text = new TextDecoder();
+var DOUBLE = 1;
+var STRING = 2;
+var DOCUMENT = 3;
+var ARRAY = 4;
+var BINARY = 5;
+var UNDEFINED = 6;
+var OBJECT_ID = 7;
+var BOOLEAN = 8;
+var DATETIME = 9;
+var NULL = 10;
+var REGEX = 11;
+var DB_POINTER = 12;
+var CODE = 13;
+var SYMBOL = 14;
+var CODE_WITH_SCOPE = 15;
+var INT32 = 16;
+var TIMESTAMP = 17;
+var INT64 = 18;
+var DECIMAL128 = 19;
+var MAX_KEY = 127;
+var MIN_KEY = 255;
+var concat = (parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+};
+var int32 = (n) => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setInt32(0, n, true);
+  return out;
+};
+var int64 = (n) => {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigInt64(0, n, true);
+  return out;
+};
+var double = (n) => {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setFloat64(0, n, true);
+  return out;
+};
+var cstring = (name) => {
+  if (name.includes("\0"))
+    throw new TypeError(`a BSON name cannot contain a NUL: ${JSON.stringify(name)}`);
+  return concat([utf8.encode(name), Uint8Array.of(0)]);
+};
+var string = (value) => {
+  const bytes = utf8.encode(value);
+  return concat([int32(bytes.length + 1), bytes, Uint8Array.of(0)]);
+};
+var isInt32 = (n) => Number.isInteger(n) && n >= -2147483648 && n <= 2147483647;
+function element(name, value) {
+  const key = cstring(name);
+  const typed = (type, ...payload) => concat([Uint8Array.of(type), key, ...payload]);
+  if (typeof value === "string")
+    return typed(STRING, string(value));
+  if (typeof value === "number")
+    return isInt32(value) ? typed(INT32, int32(value)) : typed(DOUBLE, double(value));
+  if (typeof value === "bigint")
+    return typed(INT64, int64(value));
+  if (typeof value === "boolean")
+    return typed(BOOLEAN, Uint8Array.of(value ? 1 : 0));
+  if (value === null)
+    return typed(NULL);
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    if (Number.isNaN(ms))
+      throw new TypeError(`${JSON.stringify(name)} is an invalid date`);
+    return typed(DATETIME, int64(BigInt(ms)));
+  }
+  if (value instanceof Uint8Array)
+    return typed(BINARY, int32(value.length), Uint8Array.of(0), value);
+  if (Array.isArray(value))
+    return typed(ARRAY, document(value.map((v, i) => [String(i), v === void 0 ? null : v])));
+  if (typeof value === "object")
+    return typed(DOCUMENT, document(Object.entries(value)));
+  throw new TypeError(`${JSON.stringify(name)} holds a ${typeof value}, which BSON is not written with here`);
+}
+function document(entries) {
+  const elements = entries.filter(([, v]) => v !== void 0).map(([name, v]) => element(name, v));
+  const size = 4 + elements.reduce((n, e) => n + e.length, 0) + 1;
+  return concat([int32(size), ...elements, Uint8Array.of(0)]);
+}
+var encode = (doc) => document(Object.entries(doc));
+var malformed = (what) => new Error(`malformed BSON: ${what}`);
+function put(out, name, value) {
+  if (name === "__proto__")
+    Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true });
+  else
+    out[name] = value;
+}
+var Reader = class {
+  bytes;
+  view;
+  constructor(bytes) {
+    this.bytes = bytes;
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  need(at, n, end) {
+    if (at < 0 || at + n > end)
+      throw malformed("an element runs past the end of its document");
+  }
+  cstringAt(at, end) {
+    const stop = this.bytes.indexOf(0, at);
+    if (stop < 0 || stop >= end)
+      throw malformed("a name has no end");
+    return [text.decode(this.bytes.subarray(at, stop)), stop + 1];
+  }
+  stringAt(at, end) {
+    this.need(at, 4, end);
+    const length = this.view.getInt32(at, true);
+    if (length < 1)
+      throw malformed("a string has a length below one");
+    this.need(at + 4, length, end);
+    if (this.bytes[at + 4 + length - 1] !== 0)
+      throw malformed("a string does not end in NUL");
+    return [text.decode(this.bytes.subarray(at + 4, at + 4 + length - 1)), at + 4 + length];
+  }
+  hex(at, n, end) {
+    this.need(at, n, end);
+    return [...this.bytes.subarray(at, at + n)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  int64At(at, end) {
+    this.need(at, 8, end);
+    const n = this.view.getBigInt64(at, true);
+    return n >= BigInt(Number.MIN_SAFE_INTEGER) && n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n;
+  }
+  /** The document starting at `at`, as an object or, for an array, as a list. */
+  document(at, asArray) {
+    if (at < 0 || at + 5 > this.bytes.length)
+      throw malformed("a document is shorter than its header");
+    const size = this.view.getInt32(at, true);
+    const end = at + size;
+    if (size < 5 || end > this.bytes.length)
+      throw malformed(`a document claims ${size} bytes`);
+    if (this.bytes[end - 1] !== 0)
+      throw malformed("a document does not end in NUL");
+    const object = {};
+    const list = [];
+    let p = at + 4;
+    while (p < end - 1) {
+      const type = this.bytes[p++];
+      const [name, afterName] = this.cstringAt(p, end);
+      p = afterName;
+      let value;
+      switch (type) {
+        case DOUBLE:
+          this.need(p, 8, end);
+          value = this.view.getFloat64(p, true);
+          p += 8;
+          break;
+        case STRING:
+        case SYMBOL:
+        case CODE: {
+          const [s, after] = this.stringAt(p, end);
+          value = type === CODE ? { $code: s } : s;
+          p = after;
+          break;
+        }
+        case DOCUMENT:
+        case ARRAY: {
+          const [inner, after] = this.document(p, type === ARRAY);
+          if (after > end)
+            throw malformed("a nested document runs past its parent");
+          value = inner;
+          p = after;
+          break;
+        }
+        case BINARY: {
+          this.need(p, 5, end);
+          const length = this.view.getInt32(p, true);
+          if (length < 0)
+            throw malformed("binary data has a negative length");
+          this.need(p + 5, length, end);
+          value = new Uint8Array(this.bytes.subarray(p + 5, p + 5 + length));
+          p += 5 + length;
+          break;
+        }
+        case UNDEFINED:
+          value = void 0;
+          break;
+        case OBJECT_ID:
+          value = { $oid: this.hex(p, 12, end) };
+          p += 12;
+          break;
+        case BOOLEAN:
+          this.need(p, 1, end);
+          value = this.bytes[p] === 1;
+          p += 1;
+          break;
+        case DATETIME: {
+          const ms = this.int64At(p, end);
+          value = new Date(Number(ms));
+          p += 8;
+          break;
+        }
+        case NULL:
+          value = null;
+          break;
+        case REGEX: {
+          const [pattern, afterPattern] = this.cstringAt(p, end);
+          const [options, afterOptions] = this.cstringAt(afterPattern, end);
+          value = { $regex: pattern, $options: options };
+          p = afterOptions;
+          break;
+        }
+        case DB_POINTER: {
+          const [ref, after] = this.stringAt(p, end);
+          value = { $dbPointer: { $ref: ref, $id: { $oid: this.hex(after, 12, end) } } };
+          p = after + 12;
+          break;
+        }
+        case CODE_WITH_SCOPE: {
+          this.need(p, 4, end);
+          const total = this.view.getInt32(p, true);
+          this.need(p, total, end);
+          const [code, afterCode] = this.stringAt(p + 4, p + total);
+          const [scope] = this.document(afterCode, false);
+          value = { $code: code, $scope: scope };
+          p += total;
+          break;
+        }
+        case INT32:
+          this.need(p, 4, end);
+          value = this.view.getInt32(p, true);
+          p += 4;
+          break;
+        case TIMESTAMP:
+          this.need(p, 8, end);
+          value = { $timestamp: { t: this.view.getUint32(p + 4, true), i: this.view.getUint32(p, true) } };
+          p += 8;
+          break;
+        case INT64:
+          value = this.int64At(p, end);
+          p += 8;
+          break;
+        case DECIMAL128:
+          value = { $numberDecimal: this.hex(p, 16, end) };
+          p += 16;
+          break;
+        case MIN_KEY:
+          value = { $minKey: 1 };
+          break;
+        case MAX_KEY:
+          value = { $maxKey: 1 };
+          break;
+        default:
+          throw malformed(`unknown element type 0x${type.toString(16).padStart(2, "0")} at ${JSON.stringify(name)}`);
+      }
+      if (asArray)
+        list.push(value);
+      else
+        put(object, name, value);
+    }
+    return [asArray ? list : object, end];
+  }
+};
+function decode(bytes) {
+  const [doc] = new Reader(bytes).document(0, false);
+  return doc;
+}
+
+// dist/providers/mongo.js
+var CONNECT_TIMEOUT_MS2 = 5e3;
+var COMMAND_TIMEOUT_MS = 5e3;
+var OP_MSG = 2013;
+var CHECKSUM_PRESENT = 1;
+var MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+var HEADER_BYTES = 16;
+var MIN_ITERATIONS = 4096;
+var NOT_PRIMARY = /* @__PURE__ */ new Set([10107, 13435, 11602, 189]);
+function opMsg(requestId, body) {
+  const doc = encode(body);
+  const message = new Uint8Array(HEADER_BYTES + 4 + 1 + doc.length);
+  const view = new DataView(message.buffer);
+  view.setInt32(0, message.length, true);
+  view.setInt32(4, requestId, true);
+  view.setInt32(8, 0, true);
+  view.setInt32(12, OP_MSG, true);
+  view.setUint32(16, 0, true);
+  message[20] = 0;
+  message.set(doc, 21);
+  return message;
+}
+function readReply(message) {
+  const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
+  const length = view.getInt32(0, true);
+  if (length !== message.length || length < HEADER_BYTES + 5)
+    throw new Error(`malformed answer: ${length} bytes claimed, ${message.length} read`);
+  const responseTo = view.getInt32(8, true);
+  const opCode = view.getInt32(12, true);
+  if (opCode !== OP_MSG)
+    throw new Error(`the server answered with opcode ${opCode}, where OP_MSG (${OP_MSG}) was expected`);
+  const flags = view.getUint32(16, true);
+  const end = length - (flags & CHECKSUM_PRESENT ? 4 : 0);
+  let body;
+  let p = HEADER_BYTES + 4;
+  while (p < end) {
+    const kind = message[p++];
+    const size = view.getInt32(p, true);
+    if (size < 5 || p + size > end)
+      throw new Error("malformed answer: a section runs past the message");
+    if (kind === 0)
+      body = decode(message.subarray(p, p + size));
+    else if (kind !== 1)
+      throw new Error(`malformed answer: unknown section kind ${kind}`);
+    p += size;
+  }
+  if (!body)
+    throw new Error("malformed answer: no body section");
+  return { responseTo, body };
+}
+var Framer = class {
+  pending = Buffer.alloc(0);
+  push(chunk) {
+    this.pending = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
+    const messages = [];
+    while (this.pending.length >= 4) {
+      const length = this.pending.readInt32LE(0);
+      if (length < HEADER_BYTES + 5 || length > MAX_MESSAGE_BYTES) {
+        throw new Error(`malformed answer: a message claims ${length} bytes`);
+      }
+      if (this.pending.length < length)
+        break;
+      messages.push(this.pending.subarray(0, length));
+      this.pending = this.pending.subarray(length);
+    }
+    return messages;
+  }
+};
+var codeOf2 = (err) => {
+  const code = err?.code;
+  return typeof code === "number" ? code : void 0;
+};
+function refusal(answer) {
+  const code = typeof answer["code"] === "number" ? answer["code"] : void 0;
+  const codeName = typeof answer["codeName"] === "string" ? answer["codeName"] : "";
+  const errmsg = typeof answer["errmsg"] === "string" ? answer["errmsg"] : "the server refused the command";
+  const label = [code, codeName].filter((part) => part !== void 0 && part !== "").join(" ");
+  let hint = "";
+  if (code !== void 0 && NOT_PRIMARY.has(code)) {
+    hint = " (the endpoint answered from a replica, and only the primary takes writes: ENDPOINT has to be the cluster endpoint)";
+  }
+  const err = new Error(`${label ? `${label}: ` : ""}${errmsg}${hint}`);
+  return code === void 0 ? err : Object.assign(err, { code, codeName });
+}
+var seconds2 = (ms) => `${Math.round(ms / 100) / 10} s`;
+var NO_ANSWER = /* @__PURE__ */ new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"]);
+function describeConnect(err, target, waitedMs) {
+  const e = err ?? {};
+  const code = typeof e.code === "string" ? e.code : "";
+  const message = typeof e.message === "string" && e.message ? e.message : String(err);
+  let hint = "";
+  if (UNTRUSTED.has(code)) {
+    hint = UNTRUSTED_HINT;
+  } else if (NO_ANSWER.has(code)) {
+    hint = `no answer in ${seconds2(waitedMs)}: the workload has to be in a subnet of the cluster's VPC, and the cluster's security group has to admit it on port ${target.port}`;
+  } else if (code === "ECONNREFUSED") {
+    hint = `nothing accepts connections on port ${target.port} at that address`;
+  } else if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+    hint = "the endpoint does not resolve";
+  } else if (code === "ECONNRESET" || code === "EPROTO" || code.startsWith("ERR_SSL_")) {
+    hint = "the TLS handshake failed: the Hub always connects with TLS, and a cluster whose parameter group turns TLS off refuses it";
+  }
+  const described = new Error(`${code ? `${code}: ` : ""}${message}${hint ? ` (${hint})` : ""}`);
+  return code ? Object.assign(described, { code }) : described;
+}
+var tlsDial = (target, timeoutMs) => new Promise((resolve, reject) => {
+  const socket = tls.connect({
+    host: target.host,
+    port: target.port,
+    // The name the certificate is checked against. An address has none to send.
+    ...isIP(target.host) ? {} : { servername: target.host },
+    ca: trustedAuthorities(lambdaBundle()),
+    rejectUnauthorized: true
+  });
+  const timer = setTimeout(() => {
+    socket.off("error", failed);
+    socket.destroy();
+    reject(Object.assign(new Error(`no answer from ${target.host}:${target.port}`), { code: "ETIMEDOUT" }));
+  }, timeoutMs);
+  function failed(err) {
+    clearTimeout(timer);
+    socket.destroy();
+    reject(err);
+  }
+  socket.once("error", failed);
+  socket.once("secureConnect", () => {
+    clearTimeout(timer);
+    socket.off("error", failed);
+    resolve(socket);
+  });
+});
+var dialOverride;
+var connectorOverride;
+function over(socket, target, commandTimeoutMs) {
+  const framer = new Framer();
+  const waiting = /* @__PURE__ */ new Map();
+  let broken;
+  let nextId = 1;
+  const breakWith = (err) => {
+    broken ??= err;
+    for (const pending of waiting.values()) {
+      clearTimeout(pending.timer);
+      pending.fail(broken);
+    }
+    waiting.clear();
+  };
+  socket.on("data", (chunk) => {
+    try {
+      for (const message of framer.push(chunk)) {
+        const { responseTo, body } = readReply(message);
+        const pending = waiting.get(responseTo);
+        if (!pending)
+          continue;
+        waiting.delete(responseTo);
+        clearTimeout(pending.timer);
+        pending.settle(body);
+      }
+    } catch (err) {
+      breakWith(err instanceof Error ? err : new Error(String(err)));
+      socket.destroy();
+    }
+  });
+  socket.on("error", (err) => {
+    const code = typeof err.code === "string" ? err.code : "";
+    breakWith(Object.assign(new Error(`${code ? `${code}: ` : ""}the connection to ${target.host} was lost: ${err.message}`), code ? { code } : {}));
+  });
+  socket.on("close", () => breakWith(new Error("the connection closed before the server answered")));
+  return {
+    command(db, body) {
+      if (broken)
+        return Promise.reject(broken);
+      const id = nextId++;
+      const message = opMsg(id, { ...body, $db: db });
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waiting.delete(id);
+          reject(new Error(`no answer to ${Object.keys(body)[0] ?? "the command"} in ${seconds2(commandTimeoutMs)}`));
+          socket.destroy();
+        }, commandTimeoutMs);
+        waiting.set(id, {
+          settle: (answer) => Number(answer["ok"]) === 1 ? resolve(answer) : reject(refusal(answer)),
+          fail: reject,
+          timer
+        });
+        socket.write(message);
+      });
+    },
+    async close() {
+      breakWith(new Error("the connection is closed"));
+      socket.destroy();
+    }
+  };
+}
+var hmac2 = (hash2, key, data) => createHmac(hash2, key).update(data, "utf8").digest();
+var xor = (a, b) => Buffer.from(a.map((byte, i) => byte ^ b[i]));
+function attributes(message) {
+  const out = /* @__PURE__ */ new Map();
+  for (const part of message.split(",")) {
+    const at = part.indexOf("=");
+    if (at > 0)
+      out.set(part.slice(0, at), part.slice(at + 1));
+  }
+  return out;
+}
+var saslName = (user) => user.replace(/=/g, "=3D").replace(/,/g, "=2C");
+function saslprep(password) {
+  if (/^[\x20-\x7e]*$/.test(password))
+    return password;
+  return password.replace(/[   -​  　]/g, " ").replace(/[­͏᠆᠋-᠍‌‍⁠︀-️﻿]/g, "").normalize("NFKC");
+}
+function scramFinal(hash2, secret, clientFirstBare, clientNonce, serverFirst) {
+  const server = attributes(serverFirst);
+  const nonce = server.get("r") ?? "";
+  const salt = server.get("s") ?? "";
+  const iterations = Number(server.get("i"));
+  if (!nonce.startsWith(clientNonce) || nonce.length === clientNonce.length) {
+    throw new Error("the server answered the login with a nonce that does not extend the client nonce");
+  }
+  if (!salt)
+    throw new Error("the server answered the login with no salt");
+  if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS) {
+    throw new Error(`the server asked for ${server.get("i")} iterations, and the protocol takes no fewer than ${MIN_ITERATIONS}`);
+  }
+  const salted = pbkdf2Sync(secret, Buffer.from(salt, "base64"), iterations, hash2 === "sha1" ? 20 : 32, hash2);
+  const clientKey = hmac2(hash2, salted, "Client Key");
+  const storedKey = createHash(hash2).update(clientKey).digest();
+  const withoutProof = `c=biws,r=${nonce}`;
+  const authMessage = `${clientFirstBare},${serverFirst},${withoutProof}`;
+  const proof = xor(clientKey, hmac2(hash2, storedKey, authMessage));
+  const serverSignature = hmac2(hash2, hmac2(hash2, salted, "Server Key"), authMessage);
+  return { clientFinal: `${withoutProof},p=${proof.toString("base64")}`, serverSignature };
+}
+var Scram = class {
+  mechanism;
+  credentials;
+  nonce;
+  hash;
+  bare;
+  expected;
+  constructor(mechanism, credentials2, nonce = randomBytes(24).toString("base64")) {
+    this.mechanism = mechanism;
+    this.credentials = credentials2;
+    this.nonce = nonce;
+    this.hash = mechanism === "SCRAM-SHA-256" ? "sha256" : "sha1";
+    this.bare = `n=${saslName(credentials2.user)},r=${this.nonce}`;
+  }
+  /** What `saslStart` carries. */
+  first() {
+    return `n,,${this.bare}`;
+  }
+  /** What `saslContinue` carries, given the server's first message. */
+  final(serverFirst) {
+    const { clientFinal, serverSignature } = scramFinal(this.hash, this.secret(), this.bare, this.nonce, serverFirst);
+    this.expected = serverSignature;
+    return clientFinal;
+  }
+  /**
+   * Checks the server's last message. A server that cannot produce the signature does not know the
+   * password, whatever it answered before: this is the half of SCRAM that authenticates the server.
+   */
+  verify(serverFinal) {
+    const server = attributes(serverFinal);
+    const refused = server.get("e");
+    if (refused)
+      throw new Error(`the server ended the login: ${refused}`);
+    const signature = Buffer.from(server.get("v") ?? "", "base64");
+    if (!this.expected || signature.length !== this.expected.length || !timingSafeEqual(signature, this.expected)) {
+      throw new Error("the server could not prove that it knows the password: its signature does not match");
+    }
+  }
+  /**
+   * What is hashed. SCRAM-SHA-1 hashes MongoDB's digest of the password, MD5 of
+   * `user:mongo:password` in hex, and not the password itself; SCRAM-SHA-256 hashes the password.
+   */
+  secret() {
+    const { user, password } = this.credentials;
+    return this.hash === "sha1" ? createHash("md5").update(`${user}:mongo:${password}`, "utf8").digest("hex") : saslprep(password);
+  }
+};
+function mechanismFor(hello) {
+  const listed = hello["saslSupportedMechs"];
+  return Array.isArray(listed) && listed.includes("SCRAM-SHA-256") ? "SCRAM-SHA-256" : "SCRAM-SHA-1";
+}
+var asText = (payload) => payload instanceof Uint8Array ? Buffer.from(payload).toString("utf8") : "";
+async function authenticate(connection2, scram) {
+  const started = await connection2.command("admin", {
+    saslStart: 1,
+    mechanism: scram.mechanism,
+    payload: Buffer.from(scram.first(), "utf8"),
+    autoAuthorize: 1,
+    options: { skipEmptyExchange: true }
+  });
+  const conversationId = started["conversationId"];
+  let answer = await connection2.command("admin", {
+    saslContinue: 1,
+    conversationId,
+    payload: Buffer.from(scram.final(asText(started["payload"])), "utf8")
+  });
+  scram.verify(asText(answer["payload"]));
+  for (let round = 0; answer["done"] !== true; round++) {
+    if (round === 2)
+      throw new Error("the server did not finish the login");
+    answer = await connection2.command("admin", { saslContinue: 1, conversationId, payload: new Uint8Array(0) });
+  }
+}
+async function connect3(target, credentials2, options = {}) {
+  if (connectorOverride)
+    return connectorOverride(target, credentials2, options);
+  const waitMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS2;
+  let socket;
+  try {
+    socket = await (dialOverride ?? tlsDial)(target, waitMs);
+  } catch (err) {
+    throw describeConnect(err, target, waitMs);
+  }
+  const connection2 = over(socket, target, options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS);
+  try {
+    const hello = await connection2.command("admin", { isMaster: 1, saslSupportedMechs: `admin.${credentials2.user}` }).catch((err) => {
+      if (codeOf2(err) === void 0)
+        throw err;
+      return {};
+    });
+    await authenticate(connection2, new Scram(mechanismFor(hello), credentials2));
+    return connection2;
+  } catch (err) {
+    await connection2.close();
+    throw err;
+  }
+}
+
+// dist/resources/aws_docdb_cluster/index.js
+var DATABASE = "hub";
+var COLLECTION = "hub_messages";
+var DEFAULT_PORT = 27017;
+var DUPLICATE_KEY = 11e3;
+var INDEXES = [{ key: { trace: 1 }, name: "trace_1" }];
+var ensured = /* @__PURE__ */ new Set();
+function whereTo(endpoint2, portOnWire) {
+  const bare = endpoint2.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0] ?? "";
+  const at = bare.lastIndexOf(":");
+  const host = at > 0 ? bare.slice(0, at) : bare;
+  const raw = portOnWire?.trim() || (at > 0 ? bare.slice(at + 1) : String(DEFAULT_PORT));
+  const port = Number(raw);
+  if (!host)
+    throw new Error(`the endpoint ${JSON.stringify(endpoint2)} has no host`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error(`the port ${JSON.stringify(raw)} is not a port`);
+  return { host, port };
+}
+function documentOf(record, ctx) {
+  const sentAt = new Date(record.sentAt);
+  return {
+    _id: record.id,
+    trace: record.trace,
+    path: record.path,
+    receiver: record.receiver,
+    digest: record.digest,
+    hops: record.hops,
+    // A date, so a query can compare it; kept as written if it is not one.
+    sent_at: Number.isNaN(sentAt.getTime()) ? record.sentAt : sentAt,
+    body: record.body,
+    stored_at: ctx.now()
+  };
+}
+function writeError(reported, fallback) {
+  const code = typeof reported["code"] === "number" ? reported["code"] : void 0;
+  const errmsg = typeof reported["errmsg"] === "string" ? reported["errmsg"] : fallback;
+  const err = new Error(`${code ?? ""}${code === void 0 ? "" : ": "}${errmsg}`);
+  return code === void 0 ? err : Object.assign(err, { code });
+}
+function failedWrite(answer) {
+  const errors = Array.isArray(answer["writeErrors"]) ? answer["writeErrors"] : [];
+  const failed = errors.find((e) => e["code"] !== DUPLICATE_KEY);
+  if (failed)
+    return writeError(failed, "the insert was refused");
+  const concern = answer["writeConcernError"];
+  if (concern && typeof concern === "object")
+    return writeError(concern, "the write concern was not met");
+  return void 0;
+}
+function explained(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = codeOf2(err);
+  if (code === 18) {
+    return new Error(`${message} (the cluster refused the user name and password the secret holds)`);
+  }
+  if (code === 13) {
+    return new Error(`${message} (the secret's user may not write to ${DATABASE}.${COLLECTION})`);
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+register({
+  type: "aws_docdb_cluster",
+  keys: ["PORT", "SECRET_ARN"],
+  capabilities: ["table"],
+  /**
+   * Inserts the message as a document of `hub.hub_messages`: the fields a database row carries
+   * (providers/record.ts), plus the time it was stored.
+   *
+   * WHERE: ENDPOINT and PORT, the cluster endpoint and its port, which the catalog exports. The
+   * cluster endpoint always names the primary instance, the one that takes writes. A cluster lives
+   * in a VPC, so the workload has to be in a subnet of it, and the cluster's security group has to
+   * admit it on the port — the rule the connection on the diagram carries.
+   *
+   * AS WHOM: the master user, whose user name and password are in SECRET_ARN, the secret DocumentDB
+   * keeps while it manages the password; the generated policy grants reading it. The login is
+   * SCRAM over TLS, verified against the Amazon RDS authorities (providers/mongo.ts) — the same code
+   * in a Lambda function and in a container. A cluster with a typed password exports no secret and
+   * is refused before anything is sent.
+   *
+   * ONCE PER MESSAGE: the record's id is the document's `_id`, so a redelivery is refused as a
+   * duplicate key (11000) and is not a second document — the rule the primary key of the table is
+   * in a database.
+   *
+   * Every refusal comes before anything is read or sent.
+   */
+  async send(n, envelope, ctx) {
+    const endpoint2 = n.props["ENDPOINT"];
+    if (!endpoint2) {
+      throw new Error("no endpoint on the wire: the diagram was compiled before the cluster exported it, compile it again");
+    }
+    const target = whereTo(endpoint2, n.props["PORT"]);
+    const secretArn = n.props["SECRET_ARN"];
+    if (!secretArn) {
+      throw new Error("no secret on the wire: the cluster does not keep its master password in Secrets Manager (manage_master_user_password), and a typed password cannot be read from here");
+    }
+    const region = ctx.region(n);
+    if (!region)
+      throw new Error("no region for the cluster and none for the workload");
+    const credentials2 = await credentialsFrom(secretArn, region, ctx.fetch);
+    const record = await recordOf(envelope, ctx);
+    const connection2 = await connect3(target, credentials2).catch((err) => {
+      throw explained(err);
+    });
+    try {
+      const where = `${target.host}:${target.port}`;
+      if (!ensured.has(where)) {
+        try {
+          await connection2.command(DATABASE, { createIndexes: COLLECTION, indexes: INDEXES });
+        } catch (err) {
+          if (codeOf2(err) === void 0)
+            throw err;
+        }
+        ensured.add(where);
+      }
+      const answer = await connection2.command(DATABASE, { insert: COLLECTION, documents: [documentOf(record, ctx)], ordered: true });
+      const failed = failedWrite(answer);
+      if (failed)
+        throw failed;
+    } catch (err) {
+      throw explained(err);
+    } finally {
+      await connection2.close();
+    }
   }
 });
 
@@ -7400,10 +8132,10 @@ var INDEX_DEFINITION = {
     }
   }
 };
-var ensured = /* @__PURE__ */ new Set();
+var ensured2 = /* @__PURE__ */ new Set();
 var hostOf = (endpoint2) => endpoint2.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0] ?? "";
 var answered = (err, type) => err instanceof Error && err.message.startsWith(`${type}:`);
-function explained(err) {
+function explained2(err) {
   if (err instanceof TypeError) {
     const cause = err.cause;
     const why = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : err.message;
@@ -7456,7 +8188,7 @@ register({
       throw new Error("no region for the domain and none for the workload");
     const call = (method, path, body) => rest(`https://${host}${path}`, "es", region, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, `${method} ${path}`, ctx.fetch);
     const ensureIndex = async () => {
-      if (ensured.has(host))
+      if (ensured2.has(host))
         return;
       try {
         await call("PUT", `/${INDEX}`, INDEX_DEFINITION);
@@ -7464,10 +8196,10 @@ register({
         if (!answered(err, "resource_already_exists_exception") && !answered(err, "security_exception"))
           throw err;
       }
-      ensured.add(host);
+      ensured2.add(host);
     };
     const record = await recordOf(envelope, ctx);
-    const document = {
+    const document2 = {
       trace: record.trace,
       path: record.path,
       receiver: record.receiver,
@@ -7479,7 +8211,7 @@ register({
     };
     const create = async () => {
       try {
-        await call("PUT", `/${INDEX}/_create/${record.id}`, document);
+        await call("PUT", `/${INDEX}/_create/${record.id}`, document2);
       } catch (err) {
         if (!answered(err, "version_conflict_engine_exception"))
           throw err;
@@ -7492,12 +8224,12 @@ register({
       } catch (err) {
         if (!answered(err, "index_not_found_exception"))
           throw err;
-        ensured.delete(host);
+        ensured2.delete(host);
         await ensureIndex();
         await create();
       }
     } catch (err) {
-      throw explained(err);
+      throw explained2(err);
     }
   }
 });
@@ -7505,7 +8237,7 @@ register({
 // dist/providers/dataApi.js
 var RESUME_WAITS_MS = [2e3, 3e3, 5e3, 5e3, 5e3, 5e3];
 var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-var named = (text) => text.replace(/\$(\d+)/g, ":p$1");
+var named = (text2) => text2.replace(/\$(\d+)/g, ":p$1");
 function field(value) {
   if (value === null || value === void 0)
     return { isNull: true };
@@ -7536,12 +8268,12 @@ function describe2(err) {
 function connection(target, fetchImpl, options = {}) {
   const sleep = options.sleep ?? pause;
   return {
-    async run(text, params = []) {
+    async run(text2, params = []) {
       const body = JSON.stringify({
         resourceArn: target.resourceArn,
         secretArn: target.secretArn,
         database: target.database,
-        sql: named(text),
+        sql: named(text2),
         parameters: params.map((value, i) => ({ name: `p${i + 1}`, value: field(value) }))
       });
       for (let attempt = 0; ; attempt++) {

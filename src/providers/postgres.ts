@@ -14,43 +14,18 @@
  * reached and is left external.)
  */
 
-import { readFileSync } from 'node:fs';
-import { rootCertificates } from 'node:tls';
 import pg from 'pg';
 import type { ClientConfig } from 'pg';
 
+import { lambdaBundle, trustedAuthorities, UNTRUSTED, UNTRUSTED_HINT } from './rdsCa.js';
 import { useDriver, type ConnectOptions, type Connection, type Credentials, type Driver, type Target } from './sql.js';
 
 /**
- * The Amazon certificate authorities, as Lambda ships them.
- *
- * FROM NODE.JS 20 ON, LAMBDA NO LONGER TRUSTS THE RDS CERTIFICATE AUTHORITY BY DEFAULT. The file
- * is in the runtime, and the documented way to use it is to set `NODE_EXTRA_CA_CERTS` to it — an
- * environment variable Node reads when the process starts, which a function cannot set for itself.
- * Reading the file here does the same job (see `trustedAuthorities`), and needs no setting in the
- * diagram.
- *
- * Where the file is absent — a container, a laptop — the platform's own trust store applies, and a
- * database whose certificate it does not know fails with a message that says so (see `describe`).
- * The connection is never downgraded to an unverified one: `rds.force_ssl` makes the database
- * insist on TLS, and the point of verifying is knowing WHICH server is on the other end before the
- * password is sent to it.
+ * What a connection trusts: Node's own list plus the Lambda runtime's bundle of the RDS authorities.
+ * `providers/rdsCa.ts` says why both, and why a connection is never downgraded to an unverified
+ * one. It lives there because a DocumentDB cluster is issued its certificate by the same authorities.
  */
-const LAMBDA_CA_BUNDLE = '/var/runtime/ca-cert.pem';
-
-/**
- * What a connection trusts, given the Lambda bundle when there is one: Node's own list AND the
- * bundle, which is what `NODE_EXTRA_CA_CERTS` does — the variable ADDS the file to the list.
- *
- * Handing the file alone to the connection REPLACES the list instead, and that is how this worked
- * until an RDS Proxy was wired. An instance's certificate is issued by the RDS authority, which is
- * in the file. A proxy's comes from AWS Certificate Manager and chains to an Amazon Root CA, which
- * is in Node's list. Both, then, as the variable would have it.
- *
- * `undefined` without a bundle, which leaves Node's defaults in place.
- */
-export const trustedAuthorities = (bundle: string | undefined): string[] | undefined =>
-	bundle ? [...rootCertificates, bundle] : undefined;
+export { trustedAuthorities };
 
 /**
  * How long to wait, in milliseconds: for the connection, then for each statement.
@@ -72,23 +47,6 @@ const QUERY_TIMEOUT_MS = 5000;
 
 /** What `pg` rejects with when `connectionTimeoutMillis` runs out before the server answers. */
 const CONNECT_TIMEOUT_MESSAGE = 'timeout expired';
-
-const authorities = (): string | undefined => {
-	try {
-		return readFileSync(LAMBDA_CA_BUNDLE, 'utf8');
-	} catch {
-		return undefined;
-	}
-};
-
-/** TLS failures worth naming, from Node's own error codes. */
-const UNTRUSTED = new Set([
-	'SELF_SIGNED_CERT_IN_CHAIN',
-	'DEPTH_ZERO_SELF_SIGNED_CERT',
-	'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-	'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-	'CERT_HAS_EXPIRED',
-]);
 
 /**
  * Turns a driver failure into a line a report can carry.
@@ -119,7 +77,7 @@ export function describe(err: unknown, waitedMs: number = CONNECT_TIMEOUT_MS): E
 
 	let hint = '';
 	if (UNTRUSTED.has(code)) {
-		hint = ' (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)';
+		hint = ` (${UNTRUSTED_HINT})`;
 	} else if (!fromServer && (code === 'ETIMEDOUT' || message === CONNECT_TIMEOUT_MESSAGE)) {
 		hint =
 			waitedMs > CONNECT_TIMEOUT_MS
@@ -158,7 +116,7 @@ export const clientConfig = (
 const driver: Driver = {
 	async connect(target: Target, credentials: Credentials, options?: ConnectOptions): Promise<Connection> {
 		const waitMs = options?.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
-		const client = new pg.Client(clientConfig(target, credentials, trustedAuthorities(authorities()), waitMs));
+		const client = new pg.Client(clientConfig(target, credentials, trustedAuthorities(lambdaBundle()), waitMs));
 
 		// An error on an idle connection is an event, and an event nobody listens to is an
 		// uncaught exception. The statement that was running reports its own failure.

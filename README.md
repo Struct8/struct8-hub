@@ -30,10 +30,10 @@ against a live account. Nothing here has been applied from a diagram.
 | piece | state |
 |---|---|
 | [Wiring contract](CONTRACT.md) v1 | documented, matches what the generator emits today |
-| Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (358 in the suite) |
-| AWS resources | done: 23 modules, 19 send targets, 12 event sources ([coverage](docs/coverage.md)) |
+| Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (391 in the suite) |
+| AWS resources | done: 24 modules, 20 send targets, 12 event sources ([coverage](docs/coverage.md)) |
 | AWS Lambda runtime | done, invoked end to end against a live account |
-| Deployable bundle | done: `node scripts/bundle.mjs` produces a 44 KiB zip |
+| Deployable bundle | done: `node scripts/bundle.mjs` produces a 293 KiB zip |
 | Container runtime (ECS) | done: HTTP in, task-role credentials, SQS consumption behind `HUB_POLL` ([why a variable](CONTRACT.md#known-gaps)) |
 | Cloudflare Workers runtime | planned |
 

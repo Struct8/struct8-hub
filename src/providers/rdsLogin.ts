@@ -60,7 +60,8 @@ export function quoted(user: string): string {
 
 /**
  * Reads a database credential out of a Secrets Manager secret: the one RDS manages for an
- * instance's or a cluster's master user, or the one an RDS Proxy checks its clients against.
+ * instance's or a cluster's master user, the one an RDS Proxy checks its clients against, or the
+ * one DocumentDB manages for a cluster's master user, which has the same two fields.
  *
  * The generated policy grants `secretsmanager:GetSecretValue` on exactly that secret, which is why
  * the module reads it and does not ask for a password in an environment variable: the variable

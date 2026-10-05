@@ -13,6 +13,7 @@
 		"scripts/import-harness/.harness-scratch/aurora-access-patterns/main.tf",
 		"scripts/import-harness/.harness-scratch/aurora-proxy-iam/main.tf",
 		"scripts/import-harness/.harness-scratch/db-proxy-consumer/main.tf",
+		"scripts/import-harness/.harness-scratch/docdb-hub/main.tf",
 		"scripts/import-harness/.harness-scratch/ecs-stack-completo/main.tf",
 		"scripts/import-harness/.harness-scratch/opensearch-hub/main.tf"
 	],
@@ -36,6 +37,10 @@
 		"AWS_DB_PROXY_NAME_0",
 		"AWS_DB_PROXY_PORT_0",
 		"AWS_DB_PROXY_SECRET_ARN_0",
+		"AWS_DOCDB_CLUSTER_ENDPOINT_0",
+		"AWS_DOCDB_CLUSTER_NAME_0",
+		"AWS_DOCDB_CLUSTER_PORT_0",
+		"AWS_DOCDB_CLUSTER_SECRET_ARN_0",
 		"AWS_DYNAMODB_TABLE_NAME_0",
 		"AWS_LAMBDA_FUNCTION_NAME_0",
 		"AWS_OPENSEARCH_DOMAIN_ENDPOINT_0",

@@ -85,6 +85,7 @@ test('a captured environment rebuilds exactly the wires it describes', () => {
 			'aws_cloudwatch_event_bus',
 			'aws_db_instance',
 			'aws_db_proxy',
+			'aws_docdb_cluster',
 			'aws_dynamodb_table',
 			'aws_lambda_function',
 			'aws_opensearch_domain',

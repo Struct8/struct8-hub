@@ -2,7 +2,7 @@
 
 What Hub can reach, what it cannot, and why. Derived from the catalog rather than from memory:
 the candidate set is every type that a compute node can be wired to, plus every type that can be
-wired into one. Fifty-three types qualify; the table below is what remains after removing the ones
+wired into one. Fifty-four types qualify; the table below is what remains after removing the ones
 with no data plane.
 
 That count is not fixed: it is the catalog's, and the catalog moves. `aws_cloudwatch_event_bus`
@@ -11,11 +11,12 @@ workload could be wired to one, so no variable was emitted and there was nothing
 `aws_db_proxy` joined it on 2026-10-03 the same way, when a compute node could be connected to a
 proxy as it is to the database behind it. `aws_opensearch_domain` could be connected from
 2026-09-22 and carried only its logical name until 2026-10-05, when the catalog started exporting
-its endpoint.
+its endpoint. `aws_docdb_cluster` joined it the same day: until then no compute node could be
+connected to a DocumentDB cluster at all.
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 19 send targets and 12 event sources across 23
+**Every applicable AWS resource is implemented**: 20 send targets and 12 event sources across 24
 modules. What remains is the four below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
@@ -30,8 +31,8 @@ targets. It is not.
 
 The core fans out to whatever neighbor list it is given, and that behavior is tested once. What a
 resource contributes is at most two small functions: how to send to it, and how to read an event
-from it. So coverage is **sources + targets**, not their product — twenty-nine small functions,
-not two hundred and four combinations.
+from it. So coverage is **sources + targets**, not their product — thirty-two small functions,
+not two hundred and forty combinations.
 
 The part of the matrix that does need asserting is that the sources stay distinct, and the
 conformance suite does it: every fixture is offered to every receiver, and exactly one must claim
@@ -169,7 +170,9 @@ environment variable, `NODE_EXTRA_CA_CERTS`, that Node reads at start-up. The dr
 `/var/runtime/ca-cert.pem` itself and adds it to the authorities Node already trusts, as the
 variable does. Handing the file alone to the connection would replace them instead, and an RDS
 Proxy's certificate comes from AWS Certificate Manager and chains to an Amazon Root CA, which is in
-Node's list. The connection is never downgraded to an unverified one.
+Node's list. A container has no such file: the image fetches the RDS bundle when it is built and
+sets the variable itself (`image/Dockerfile`). Until 2026-10-05 it did not, and a container could
+not verify a database's certificate. The connection is never downgraded to an unverified one.
 
 **A proxy is a way into a database, not a database of its own.** `aws_db_proxy` writes the same row
 into the same table; what differs is how the wire says where to connect. `ENDPOINT` is the proxy's
@@ -246,6 +249,58 @@ certificate was verified, and the proxy refused `statement_timeout`, which the d
 sends. Authentication through the proxy and the write have not run yet. None of the Aurora paths,
 IAM login or the Data API has run against a live database yet: the token is checked against the
 signature specification and the Data API against its documented request, both offline.
+
+## Send — a document database
+
+| type | how | |
+|---|---|---|
+| `aws_docdb_cluster` | `insert` into `hub.hub_messages`, over the MongoDB wire protocol | ✓ |
+
+**The same record, as a document.** The fields of the database row (`providers/record.ts`), the
+identity as `_id`, `sent_at` and `stored_at` as dates, in the collection `hub_messages` of a
+database the Hub names `hub`: a DocumentDB cluster is created with no database, and the first insert
+creates both. A redelivery is refused as a duplicate key (11000), which is the message already
+stored, as `on conflict do nothing` is in SQL. An index on `trace` is created the first time a
+container writes to a cluster, and a user that may not create it still writes.
+
+**The protocol is written here, not bundled, for a reason Postgres did not have.**
+`providers/postgres.ts` takes `pg` because a mistake in SCRAM fails only against a real server.
+SCRAM has published test vectors, and the suite checks this exchange against three of them, message
+for message: RFC 5802 (SHA-1), RFC 7677 (SHA-256), and the example in the MongoDB authentication
+specification, which hashes MongoDB's digest of the password instead of the password. The rest is
+small: BSON for the values written (every type is decoded, because the answer is the server's to
+shape), one OP_MSG per command, and an `isMaster` to learn the mechanisms. The official driver
+brings connection pools, server monitoring and a dependency tree, for one insert, into a bundle kept
+readable on purpose. None of that is needed here: the cluster endpoint always names the primary,
+and one insert per message needs no pool. The module, BSON and the protocol together add 27 KiB to
+the bundle.
+
+**SCRAM-SHA-256 when the user has it, SCRAM-SHA-1 otherwise.** `isMaster` with
+`saslSupportedMechs` answers which. DocumentDB has SCRAM-SHA-256 from engine 5.0.1 and 8.0.1, and a
+server that lists nothing takes SCRAM-SHA-1. The server's final signature is checked: a server that
+cannot produce it does not know the password, and is not written to.
+
+**TLS, always, verified against the Amazon RDS certificate authorities**, which issue DocumentDB's
+certificates too (`providers/rdsCa.ts`, shared with the Postgres driver). On Lambda they are in
+`/var/runtime/ca-cert.pem`. The container image fetches the RDS bundle when it is built and points
+`NODE_EXTRA_CA_CERTS` at it, which also lets a Postgres connection from a container verify. A cluster
+whose parameter group turns TLS off fails the handshake, and the message says so.
+
+**The catalog exports `ENDPOINT`, `PORT` and `SECRET_ARN`**, the last only while DocumentDB manages
+the master password, which is the catalog's default. The generated policy grants `GetSecretValue` on
+that secret — on an ECS task definition to the task role too, where the code runs — and the
+connection carries the rule that opens the port on the cluster's security group. A cluster with a
+typed password exports no secret and is refused before anything is read.
+
+**Needs a route to the cluster and to Secrets Manager**, as a relational database does: the
+workload in a subnet of the cluster's VPC, and Secrets Manager through a NAT gateway or an interface
+endpoint. A connection with no answer in five seconds says to look at the subnet and the security
+group.
+
+Not covered: IAM authentication (`MONGODB-AWS`), which needs a user created for the role inside the
+cluster, and elastic clusters, which the catalog does not have. Nothing of this has run against a
+live cluster yet. The TLS path was checked against a local server whose authority was trusted
+through `NODE_EXTRA_CA_CERTS`, as in the image.
 
 ## Receive — event sources
 

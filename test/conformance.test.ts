@@ -13,6 +13,7 @@ import '../dist/resources/index.js';
 import * as registry from '../dist/core/registry.js';
 import { normalize } from '../dist/core/hub.js';
 import { open } from '../dist/core/envelope.js';
+import * as mongo from '../dist/providers/mongo.js';
 import * as sql from '../dist/providers/sql.js';
 import type { Capability, Ctx, Neighbor } from '../dist/core/types.js';
 // Explicit .ts: Node's type stripping resolves the path as written and does not rewrite .js to
@@ -86,6 +87,9 @@ process.env['AWS_SECRET_ACCESS_KEY'] ??= 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEK
 sql.useDriver('postgres', {
 	connect: async () => ({ run: async () => {}, close: async () => {} }),
 });
+// The same for a DocumentDB cluster, whose protocol is not SQL: a connection whose every command
+// is answered `ok: 1`.
+mongo.useConnector(async () => ({ command: async () => ({ ok: 1 }), close: async () => {} }));
 
 test('the registry is not empty', () => {
 	assert.ok(MODULES.length >= 18, `expected the bundled resources, found ${MODULES.length}`);

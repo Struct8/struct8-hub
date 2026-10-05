@@ -77,7 +77,7 @@ reached is a silent failure: the variable parses, a neighbor appears, and nothin
 | `DB_NAME` | database name |
 | `ENGINE` | the database engine, as the provider names it: `postgres`, `mysql`, `aurora-postgresql` |
 | `ENGINE_FAMILY` | the protocol an RDS Proxy speaks, as the provider names it: `POSTGRESQL`, `MYSQL`, `SQLSERVER` |
-| `PORT` | the port to connect to, where `ENDPOINT` is the host alone (an RDS Proxy, an Aurora cluster) |
+| `PORT` | the port to connect to, where `ENDPOINT` is the host alone (an RDS Proxy, an Aurora cluster, a DocumentDB cluster) |
 | `IAM_USER` | the database user to log in as with an IAM token — **emitted only when the workload's role is granted `rds-db:connect` on that database for that user** |
 | `IAM_AUTH` | `REQUIRED` when an RDS Proxy refuses passwords: log in with a token as the user `SECRET_ARN` holds — **emitted only then** |
 | `DATA_API` | `true` when the workload has no network path to an Aurora cluster and reaches it through the RDS Data API, at `ARN` — **emitted only then** |

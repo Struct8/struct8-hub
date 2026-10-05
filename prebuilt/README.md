@@ -6,7 +6,7 @@ takes when there is no Node toolchain in the way.
 ```
 runtime   nodejs22.x
 handler   index.handler
-size      44 KiB
+size      293 KiB
 ```
 
 ## Using it in a CloudMan template
