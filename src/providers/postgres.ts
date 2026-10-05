@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { rootCertificates } from 'node:tls';
 import pg from 'pg';
+import type { ClientConfig } from 'pg';
 
 import { useDriver, type Connection, type Credentials, type Driver, type Target } from './sql.js';
 
@@ -52,14 +53,25 @@ export const trustedAuthorities = (bundle: string | undefined): string[] | undef
 	bundle ? [...rootCertificates, bundle] : undefined;
 
 /**
- * How long to wait for each phase, in milliseconds.
+ * How long to wait, in milliseconds: for the connection, then for each statement.
  *
  * Not decoration: a function in a subnet with no route to the database does not fail, it WAITS,
  * and the wait is billed up to the function's own timeout. Five seconds is far above a healthy
  * handshake and far below thirty.
+ *
+ * THE STATEMENT LIMIT IS THE CLIENT'S (`query_timeout`), NOT THE SERVER'S (`statement_timeout`).
+ * `pg` sends `statement_timeout` in the startup message, and an RDS Proxy refuses the connection
+ * over it: "0A000: Feature not supported: RDS Proxy currently doesn't support the option
+ * statement_timeout", measured on 2026-10-04. Sending it after connecting, with `SET`, would pin
+ * the client to one database connection, which is what a proxy exists to avoid. A database reached
+ * directly accepted it; what it loses is the cancellation on the server side, while the function
+ * still stops waiting after the same five seconds.
  */
 const CONNECT_TIMEOUT_MS = 5000;
-const STATEMENT_TIMEOUT_MS = 5000;
+const QUERY_TIMEOUT_MS = 5000;
+
+/** What `pg` rejects with when `connectionTimeoutMillis` runs out before the server answers. */
+const CONNECT_TIMEOUT_MESSAGE = 'timeout expired';
 
 const authorities = (): string | undefined => {
 	try {
@@ -87,38 +99,52 @@ const UNTRUSTED = new Set([
  *
  * Nothing here can contain the password: `pg` never puts it in a message, and the credential is
  * not an argument to this function.
+ *
+ * The pointer to the subnet goes only on a connection that got no answer. An error the server sent
+ * proves the network works, and a word in its text is no evidence: the RDS Proxy refusal of
+ * `statement_timeout` contains "timeout", and was reported as a routing problem until this was
+ * narrowed.
+ *
+ * Exported for the tests.
  */
-function describe(err: unknown): Error {
+export function describe(err: unknown): Error {
 	const e = (err ?? {}) as { code?: unknown; message?: unknown };
 	const code = typeof e.code === 'string' ? e.code : '';
 	const message = typeof e.message === 'string' && e.message ? e.message : String(err);
+	const fromServer = err instanceof pg.DatabaseError;
 
 	let hint = '';
 	if (UNTRUSTED.has(code)) {
 		hint = ' (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)';
-	} else if (/timeout/i.test(message) || code === 'ETIMEDOUT') {
+	} else if (!fromServer && (code === 'ETIMEDOUT' || message === CONNECT_TIMEOUT_MESSAGE)) {
 		hint = ' (the function has to be in a subnet that can reach the database)';
 	}
 
 	return new Error(`${code ? `${code}: ` : ''}${message}${hint}`);
 }
 
+/**
+ * What a client is built with, given what it trusts.
+ *
+ * Exported so a test can read the startup message `pg` derives from it. That message reaches the
+ * server before the password does, and an RDS Proxy refuses a parameter it does not support
+ * instead of ignoring it (see QUERY_TIMEOUT_MS).
+ */
+export const clientConfig = (target: Target, credentials: Credentials, ca: string[] | undefined): ClientConfig => ({
+	host: target.host,
+	port: target.port,
+	database: target.database,
+	user: credentials.user,
+	password: credentials.password,
+	ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
+	connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+	query_timeout: QUERY_TIMEOUT_MS,
+	application_name: 'struct8-hub',
+});
+
 const driver: Driver = {
 	async connect(target: Target, credentials: Credentials): Promise<Connection> {
-		const ca = trustedAuthorities(authorities());
-
-		const client = new pg.Client({
-			host: target.host,
-			port: target.port,
-			database: target.database,
-			user: credentials.user,
-			password: credentials.password,
-			ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
-			connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-			statement_timeout: STATEMENT_TIMEOUT_MS,
-			query_timeout: STATEMENT_TIMEOUT_MS,
-			application_name: 'struct8-hub',
-		});
+		const client = new pg.Client(clientConfig(target, credentials, trustedAuthorities(authorities())));
 
 		// An error on an idle connection is an event, and an event nobody listens to is an
 		// uncaught exception. The statement that was running reports its own failure.

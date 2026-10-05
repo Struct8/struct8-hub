@@ -131,6 +131,13 @@ AWS account.
 
 ### Fixed
 
+- Through an RDS Proxy, every connection was refused: `0A000: Feature not supported: RDS Proxy
+  currently doesn't support the option statement_timeout`. `pg` sends `statement_timeout` in the
+  startup message, which a database accepts and a proxy does not. The statement limit is now the
+  client's (`query_timeout`, the same five seconds), and a test reads the startup message `pg`
+  builds. The same report carried a pointer to the subnet, because its text contains "timeout":
+  that pointer now goes only on a connection the server never answered. Reported from the first
+  apply of a proxy, not caught by the suite, which ran the module over a fake driver.
 - Behind an API Gateway REST proxy integration, every request answered `502 Internal server
   error`. The Lambda runtime returned the report on its own, and a payload-format-1.0 proxy
   integration refuses any answer without `statusCode`. Nothing on the function's side showed it —

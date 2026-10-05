@@ -6445,7 +6445,8 @@ function parseEndpoint(raw, engine) {
 var LAMBDA_CA_BUNDLE = "/var/runtime/ca-cert.pem";
 var trustedAuthorities = (bundle) => bundle ? [...rootCertificates, bundle] : void 0;
 var CONNECT_TIMEOUT_MS = 5e3;
-var STATEMENT_TIMEOUT_MS = 5e3;
+var QUERY_TIMEOUT_MS = 5e3;
+var CONNECT_TIMEOUT_MESSAGE = "timeout expired";
 var authorities = () => {
   try {
     return readFileSync(LAMBDA_CA_BUNDLE, "utf8");
@@ -6464,29 +6465,29 @@ function describe(err) {
   const e = err ?? {};
   const code = typeof e.code === "string" ? e.code : "";
   const message = typeof e.message === "string" && e.message ? e.message : String(err);
+  const fromServer = err instanceof esm_default.DatabaseError;
   let hint = "";
   if (UNTRUSTED.has(code)) {
     hint = " (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)";
-  } else if (/timeout/i.test(message) || code === "ETIMEDOUT") {
+  } else if (!fromServer && (code === "ETIMEDOUT" || message === CONNECT_TIMEOUT_MESSAGE)) {
     hint = " (the function has to be in a subnet that can reach the database)";
   }
   return new Error(`${code ? `${code}: ` : ""}${message}${hint}`);
 }
+var clientConfig = (target, credentials, ca) => ({
+  host: target.host,
+  port: target.port,
+  database: target.database,
+  user: credentials.user,
+  password: credentials.password,
+  ssl: { rejectUnauthorized: true, ...ca ? { ca } : {} },
+  connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+  query_timeout: QUERY_TIMEOUT_MS,
+  application_name: "struct8-hub"
+});
 var driver = {
   async connect(target, credentials) {
-    const ca = trustedAuthorities(authorities());
-    const client2 = new esm_default.Client({
-      host: target.host,
-      port: target.port,
-      database: target.database,
-      user: credentials.user,
-      password: credentials.password,
-      ssl: { rejectUnauthorized: true, ...ca ? { ca } : {} },
-      connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-      statement_timeout: STATEMENT_TIMEOUT_MS,
-      query_timeout: STATEMENT_TIMEOUT_MS,
-      application_name: "struct8-hub"
-    });
+    const client2 = new esm_default.Client(clientConfig(target, credentials, trustedAuthorities(authorities())));
     client2.on("error", () => {
     });
     try {

@@ -167,16 +167,18 @@ secret, and the proxy refuses the password at login.
 **One connection per send, with a five-second limit on each phase.** A function in a subnet with
 no route to the database does not fail, it waits, and the wait is billed up to the function's own
 timeout. Connection pooling belongs to the proxy, not to a warm container that holds a slot of a
-small instance.
+small instance. The limit on a statement is the client's: `statement_timeout` in the startup
+message makes an RDS Proxy refuse the connection (0A000, measured on the first apply), and a `SET`
+after connecting would pin the session to one database connection.
 
 **Needs a route to the database and to Secrets Manager.** The function has to be in a subnet, and
 a subnet with no NAT reaches Secrets Manager only through an interface endpoint.
 
 The instance path has run against a real database: on 2026-10-04 a function connected to a
-Postgres instance reported its hop as delivered (`ok: true`) every minute, in about 100 ms. Nothing
-has run against a real proxy yet. The suite proves the logic over a fake driver; the handshake with
-the proxy and its certificate chain are the first things to read in the report after the first
-apply.
+Postgres instance reported its hop as delivered (`ok: true`) every minute, in about 100 ms. The
+proxy path got as far as the startup message the same day: the secret was read, the proxy's
+certificate was verified, and the proxy refused `statement_timeout`, which the driver no longer
+sends. Authentication through the proxy and the write have not run yet.
 
 ## Receive — event sources
 

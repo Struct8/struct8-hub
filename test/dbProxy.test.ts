@@ -12,21 +12,24 @@
  *   * ENGINE_FAMILY is read as a key of its own, and not as ENGINE with a label.
  *   * The connection trusts Node's authorities as well as the Lambda bundle: a proxy's certificate
  *     comes from AWS Certificate Manager and chains to an Amazon Root CA, which is in Node's list.
+ *   * The startup message carries nothing a proxy refuses. The first apply measured one: `pg` sent
+ *     `statement_timeout` there, and every connection was refused with 0A000.
  *
- * None of this proves the handshake with a real proxy. That is the first thing to look at after the
- * first apply.
+ * The rest of the handshake is proved by the apply, not here: on 2026-10-04 the proxy accepted the
+ * TLS connection and refused the startup message, which is as far as the first run got.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { X509Certificate } from 'node:crypto';
+import pg from 'pg';
 
 import '../dist/resources/aws_db_instance/index.js';
 import '../dist/resources/aws_db_proxy/index.js';
 import * as registry from '../dist/core/registry.js';
 import * as aws from '../dist/providers/aws.js';
 import * as sql from '../dist/providers/sql.js';
-import { trustedAuthorities } from '../dist/providers/postgres.js';
+import { clientConfig, describe as describeFailure, trustedAuthorities } from '../dist/providers/postgres.js';
 import { discover } from '../dist/core/discovery.js';
 import { open } from '../dist/core/envelope.js';
 import type { Ctx, Envelope, Neighbor } from '../dist/core/types.js';
@@ -234,4 +237,38 @@ test('a connection trusts the Lambda bundle without dropping the authorities Nod
 		subjects.some((subject) => subject.split('\n').includes('CN=Amazon Root CA 1')),
 		'the authority a proxy certificate chains to is missing'
 	);
+});
+
+test('the startup message carries only what an RDS Proxy accepts, and statements still have a limit', () => {
+	const config = clientConfig(
+		{ host: 'app-proxy.proxy-abc123.us-west-2.rds.amazonaws.com', port: 5432, database: 'appdb' },
+		{ user: 'dbadmin', password: 'correct-horse-battery' },
+		undefined
+	);
+
+	// `getStartupConf` is what `pg` itself sends after the TLS handshake. It is not in pg's types,
+	// and reading it here is the point: the parameters are derived from the config, and a new one
+	// would arrive in the message without anyone writing it there.
+	const startup = (new pg.Client(config) as unknown as { getStartupConf(): Record<string, string> }).getStartupConf();
+	assert.deepEqual(Object.keys(startup).sort(), ['application_name', 'database', 'user']);
+
+	assert.equal(config.query_timeout, 5000, 'a statement must still give up, on the client side');
+	assert.equal(config.connectionTimeoutMillis, 5000);
+});
+
+test('the subnet is blamed only when the server never answered', () => {
+	// The refusal the first apply produced. The server sent it, so the network was fine, and the
+	// word "timeout" in it once earned it the subnet pointer.
+	const refusal = Object.assign(
+		new pg.DatabaseError("Feature not supported: RDS Proxy currently doesn't support the option statement_timeout.", 0, 'error'),
+		{ code: '0A000' }
+	);
+	assert.equal(
+		describeFailure(refusal).message,
+		"0A000: Feature not supported: RDS Proxy currently doesn't support the option statement_timeout."
+	);
+
+	for (const silence of [new Error('timeout expired'), Object.assign(new Error('connect ETIMEDOUT 10.8.0.181:5432'), { code: 'ETIMEDOUT' })]) {
+		assert.match(describeFailure(silence).message, /the function has to be in a subnet that can reach the database/);
+	}
 });
