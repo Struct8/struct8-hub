@@ -118,6 +118,14 @@ async function fail(res: Response, what: string): Promise<never> {
 	if (body.startsWith('{')) {
 		try {
 			const json = JSON.parse(body) as Record<string, unknown>;
+
+			// OpenSearch answers in its own shape, `{ "error": { "type", "reason" }, "status" }`: the
+			// type is the code a person searches for (`security_exception`), the reason says why.
+			const error = json['error'] as Record<string, unknown> | null | undefined;
+			if (error && typeof error === 'object' && typeof error['type'] === 'string') {
+				throw new Error(`${error['type']}: ${typeof error['reason'] === 'string' ? error['reason'] : what}`);
+			}
+
 			const code = String(json['__type'] ?? json['code'] ?? named ?? res.status).split('#').pop();
 			const message = json['message'] ?? json['Message'] ?? '';
 			throw new Error(`${code}: ${message || what}`);

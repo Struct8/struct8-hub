@@ -14,6 +14,14 @@ AWS account.
 
 ### Added
 
+- A workload can index into an OpenSearch domain. `aws_opensearch_domain` is the 23rd module: the
+  message becomes a document of `hub_messages` — the fields a database row carries, through the new
+  `providers/record.ts`, plus the time it was stored — at `PUT /hub_messages/_create/<id>`, signed
+  for `es`. The id is the hash of what identifies a message, so a redelivery (409) is not a second
+  document. The index is created with its mapping once per container, and a role that may not create
+  indexes still writes. It needs nothing but the signed `fetch`, so it runs unchanged in a Lambda
+  function and in a container. The catalog exports `ENDPOINT` since 2026-10-05; before that the wire
+  carried the logical name alone. An OpenSearch error is now reported by its `type` and `reason`.
 - A workload can write to an Aurora cluster, three ways. `aws_rds_cluster` is the 22nd module and
   writes the row an instance wire writes. The compile decides the way per wire, from how each
   function is drawn: over TCP with the master user's secret; over TCP as an IAM user, when the

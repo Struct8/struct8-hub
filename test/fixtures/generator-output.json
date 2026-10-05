@@ -13,7 +13,8 @@
 		"scripts/import-harness/.harness-scratch/aurora-access-patterns/main.tf",
 		"scripts/import-harness/.harness-scratch/aurora-proxy-iam/main.tf",
 		"scripts/import-harness/.harness-scratch/db-proxy-consumer/main.tf",
-		"scripts/import-harness/.harness-scratch/ecs-stack-completo/main.tf"
+		"scripts/import-harness/.harness-scratch/ecs-stack-completo/main.tf",
+		"scripts/import-harness/.harness-scratch/opensearch-hub/main.tf"
 	],
 	"capturedOn": "2026-10-05",
 	"base": [
@@ -37,6 +38,8 @@
 		"AWS_DB_PROXY_SECRET_ARN_0",
 		"AWS_DYNAMODB_TABLE_NAME_0",
 		"AWS_LAMBDA_FUNCTION_NAME_0",
+		"AWS_OPENSEARCH_DOMAIN_ENDPOINT_0",
+		"AWS_OPENSEARCH_DOMAIN_NAME_0",
 		"AWS_RDS_CLUSTER_ARN_0",
 		"AWS_RDS_CLUSTER_DATA_API_0",
 		"AWS_RDS_CLUSTER_DB_NAME_0",

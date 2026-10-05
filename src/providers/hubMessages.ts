@@ -9,6 +9,7 @@
 
 import type { Ctx, Envelope } from '../core/types.js';
 import * as rdsLogin from './rdsLogin.js';
+import { recordOf } from './record.js';
 import * as sql from './sql.js';
 
 /** One dialect's way of creating the table and writing a row into it. */
@@ -17,22 +18,6 @@ interface Statements {
 	readonly insert: string;
 	row(envelope: Envelope, ctx: Ctx): Promise<unknown[]>;
 }
-
-const sha256 = async (text: string): Promise<string> =>
-	[...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
-
-/** The columns every dialect stores, in the order the statements below take them. */
-const columns = async (envelope: Envelope, ctx: Ctx) => ({
-	trace: envelope.trace,
-	path: envelope.path.join(' > '),
-	receiver: ctx.self,
-	digest: await sha256(envelope.body),
-	hops: envelope.hops,
-	at: envelope.at,
-	body: envelope.body,
-});
 
 /**
  * Where the messages land. One table, created on first use.
@@ -64,8 +49,8 @@ const POSTGRES: Statements = {
 	values ($1, $2, $3, $4, $5, cast($6 as timestamptz), $7)
 	on conflict do nothing`,
 	async row(envelope, ctx) {
-		const c = await columns(envelope, ctx);
-		return [c.trace, c.path, c.receiver, c.digest, c.hops, c.at, c.body];
+		const r = await recordOf(envelope, ctx);
+		return [r.trace, r.path, r.receiver, r.digest, r.hops, r.sentAt, r.body];
 	},
 };
 
@@ -93,11 +78,10 @@ const MYSQL: Statements = {
 	insert: `insert ignore into hub_messages (id, trace, path, receiver, digest, hops, sent_at, body)
 	values ($1, $2, $3, $4, $5, $6, $7, $8)`,
 	async row(envelope, ctx) {
-		const c = await columns(envelope, ctx);
-		const id = await sha256([c.trace, c.path, c.receiver, c.digest].join('\n'));
-		const when = new Date(c.at);
-		const sentAt = Number.isNaN(when.getTime()) ? c.at : when.toISOString().replace('T', ' ').replace('Z', '');
-		return [id, c.trace, c.path, c.receiver, c.digest, c.hops, sentAt, c.body];
+		const r = await recordOf(envelope, ctx);
+		const when = new Date(r.sentAt);
+		const sentAt = Number.isNaN(when.getTime()) ? r.sentAt : when.toISOString().replace('T', ' ').replace('Z', '');
+		return [r.id, r.trace, r.path, r.receiver, r.digest, r.hops, sentAt, r.body];
 	},
 };
 
@@ -153,9 +137,7 @@ export async function store(
 ): Promise<void> {
 	await ensureTable(connection, dialect);
 
-	// The columns, and not `seal(envelope)`. Sealing is for a message that another Hub will read
-	// back, so that the chain keeps its id and its remaining budget; nothing reads a row of this
-	// table as a message, and the same fields are here as columns, where they can be queried.
+	// The fields of the record (providers/record.ts), not `seal(envelope)`: see there why.
 	const statements = STATEMENTS[dialect];
 	await connection.run(statements.insert, await statements.row(envelope, ctx));
 }

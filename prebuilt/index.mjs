@@ -5959,6 +5959,10 @@ async function fail(res, what) {
   if (body.startsWith("{")) {
     try {
       const json2 = JSON.parse(body);
+      const error = json2["error"];
+      if (error && typeof error === "object" && typeof error["type"] === "string") {
+        throw new Error(`${error["type"]}: ${typeof error["reason"] === "string" ? error["reason"] : what}`);
+      }
       const code2 = String(json2["__type"] ?? json2["code"] ?? named2 ?? res.status).split("#").pop();
       const message = json2["message"] ?? json2["Message"] ?? "";
       throw new Error(`${code2}: ${message || what}`);
@@ -6485,7 +6489,7 @@ async function open2(engine, target, login, region, fetchImpl, options) {
   }
   const user = named2;
   const withToken = async () => connect(engine, target, { user, password: await authToken(target.host, target.port, user, region) }, options);
-  const explained = (err) => {
+  const explained2 = (err) => {
     const code = codeOf(err);
     if (code !== NOT_AN_IAM_USER && code !== TOKEN_REFUSED)
       return err;
@@ -6498,27 +6502,36 @@ async function open2(engine, target, login, region, fetchImpl, options) {
     return await withToken();
   } catch (err) {
     if (codeOf(err) !== NOT_AN_IAM_USER || login.proxy || !login.secretArn)
-      throw explained(err);
+      throw explained2(err);
   }
   await provisionIamUser(engine, target, user, login.secretArn, region, fetchImpl, options);
   try {
     return await withToken();
   } catch (err) {
-    throw explained(err);
+    throw explained2(err);
   }
 }
 
-// dist/providers/hubMessages.js
+// dist/providers/record.js
 var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-var columns = async (envelope, ctx) => ({
-  trace: envelope.trace,
-  path: envelope.path.join(" > "),
-  receiver: ctx.self,
-  digest: await sha256(envelope.body),
-  hops: envelope.hops,
-  at: envelope.at,
-  body: envelope.body
-});
+async function recordOf(envelope, ctx) {
+  const trace = envelope.trace;
+  const path = envelope.path.join(" > ");
+  const receiver = ctx.self;
+  const digest = await sha256(envelope.body);
+  return {
+    id: await sha256([trace, path, receiver, digest].join("\n")),
+    trace,
+    path,
+    receiver,
+    digest,
+    hops: envelope.hops,
+    sentAt: envelope.at,
+    body: envelope.body
+  };
+}
+
+// dist/providers/hubMessages.js
 var POSTGRES = {
   create: `create table if not exists hub_messages (
 	trace      text        not null,
@@ -6535,8 +6548,8 @@ var POSTGRES = {
 	values ($1, $2, $3, $4, $5, cast($6 as timestamptz), $7)
 	on conflict do nothing`,
   async row(envelope, ctx) {
-    const c = await columns(envelope, ctx);
-    return [c.trace, c.path, c.receiver, c.digest, c.hops, c.at, c.body];
+    const r = await recordOf(envelope, ctx);
+    return [r.trace, r.path, r.receiver, r.digest, r.hops, r.sentAt, r.body];
   }
 };
 var MYSQL = {
@@ -6555,11 +6568,10 @@ var MYSQL = {
   insert: `insert ignore into hub_messages (id, trace, path, receiver, digest, hops, sent_at, body)
 	values ($1, $2, $3, $4, $5, $6, $7, $8)`,
   async row(envelope, ctx) {
-    const c = await columns(envelope, ctx);
-    const id = await sha256([c.trace, c.path, c.receiver, c.digest].join("\n"));
-    const when = new Date(c.at);
-    const sentAt = Number.isNaN(when.getTime()) ? c.at : when.toISOString().replace("T", " ").replace("Z", "");
-    return [id, c.trace, c.path, c.receiver, c.digest, c.hops, sentAt, c.body];
+    const r = await recordOf(envelope, ctx);
+    const when = new Date(r.sentAt);
+    const sentAt = Number.isNaN(when.getTime()) ? r.sentAt : when.toISOString().replace("T", " ").replace("Z", "");
+    return [r.id, r.trace, r.path, r.receiver, r.digest, r.hops, sentAt, r.body];
   }
 };
 var STATEMENTS = { postgres: POSTGRES, mysql: MYSQL };
@@ -7062,6 +7074,124 @@ register({
       describe: `ALB ${event?.httpMethod ?? "?"} ${event?.path ?? "/"} \u2192 ${target}`,
       items: [{ body }]
     };
+  }
+});
+
+// dist/resources/aws_opensearch_domain/index.js
+var INDEX = "hub_messages";
+var INDEX_DEFINITION = {
+  mappings: {
+    properties: {
+      trace: { type: "keyword" },
+      path: { type: "keyword" },
+      receiver: { type: "keyword" },
+      digest: { type: "keyword" },
+      hops: { type: "integer" },
+      sent_at: { type: "date" },
+      body: { type: "text" },
+      stored_at: { type: "date" }
+    }
+  }
+};
+var ensured = /* @__PURE__ */ new Set();
+var hostOf = (endpoint2) => endpoint2.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0] ?? "";
+var answered = (err, type) => err instanceof Error && err.message.startsWith(`${type}:`);
+function explained(err) {
+  if (err instanceof TypeError) {
+    const cause = err.cause;
+    const why = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : err.message;
+    return new Error(`the domain did not answer (${why}): the function has to be in a subnet of the domain's VPC, and the domain's security group has to admit it on port 443`);
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  if (answered(err, "security_exception")) {
+    return new Error(`${message} (the domain has fine-grained access control on: the function's role has to be its master user, or be mapped in OpenSearch to a role that writes to ${INDEX})`);
+  }
+  if (/not authorized to perform: es:ESHttp/i.test(message)) {
+    return new Error(`${message} (the function's role needs es:ESHttpPut on the domain, which the policy statement of the connection grants)`);
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+register({
+  type: "aws_opensearch_domain",
+  capabilities: ["table"],
+  /**
+   * Indexes the message as a document of `hub_messages`: the fields a database row carries
+   * (providers/record.ts), plus the time it was stored.
+   *
+   * WHERE: ENDPOINT, the domain's own endpoint, which the catalog exports. A domain drawn in
+   * CloudMan always lives in a VPC, so the function has to be in a subnet of it, and the domain's
+   * security group has to admit the function on 443.
+   *
+   * AS WHOM: the function's role, with a SigV4 signature for `es` -- the same signer every other
+   * destination uses, which is what makes this work unchanged in a Lambda function and in a
+   * container. The policy statement of the connection grants `es:ESHttp*` on the domain, and with
+   * no access policy of its own the domain accepts what the role's policy allows. With fine-grained
+   * access control on, OpenSearch also wants the role mapped to one of its roles, and the failure
+   * says so.
+   *
+   * ONCE PER MESSAGE: `_create` with the record's id, so a redelivery finds the document there
+   * (409) and is not a second one -- the rule the primary key of the table is in a database.
+   *
+   * THE INDEX is created with its mapping the first time a container writes to the domain. One
+   * that exists is kept as it is, and a role that may not create indexes still writes into one
+   * that exists, or into the one OpenSearch creates on first write.
+   */
+  async send(n, envelope, ctx) {
+    const endpoint2 = n.props["ENDPOINT"];
+    if (!endpoint2) {
+      throw new Error("no endpoint on the wire: the diagram was compiled before the domain exported it, compile it again");
+    }
+    const host = hostOf(endpoint2);
+    if (!host)
+      throw new Error(`the endpoint ${JSON.stringify(endpoint2)} has no host`);
+    const region = ctx.region(n);
+    if (!region)
+      throw new Error("no region for the domain and none for the workload");
+    const call = (method, path, body) => rest(`https://${host}${path}`, "es", region, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, `${method} ${path}`, ctx.fetch);
+    const ensureIndex = async () => {
+      if (ensured.has(host))
+        return;
+      try {
+        await call("PUT", `/${INDEX}`, INDEX_DEFINITION);
+      } catch (err) {
+        if (!answered(err, "resource_already_exists_exception") && !answered(err, "security_exception"))
+          throw err;
+      }
+      ensured.add(host);
+    };
+    const record = await recordOf(envelope, ctx);
+    const document = {
+      trace: record.trace,
+      path: record.path,
+      receiver: record.receiver,
+      digest: record.digest,
+      hops: record.hops,
+      sent_at: record.sentAt,
+      body: record.body,
+      stored_at: ctx.now().toISOString()
+    };
+    const create = async () => {
+      try {
+        await call("PUT", `/${INDEX}/_create/${record.id}`, document);
+      } catch (err) {
+        if (!answered(err, "version_conflict_engine_exception"))
+          throw err;
+      }
+    };
+    try {
+      await ensureIndex();
+      try {
+        await create();
+      } catch (err) {
+        if (!answered(err, "index_not_found_exception"))
+          throw err;
+        ensured.delete(host);
+        await ensureIndex();
+        await create();
+      }
+    } catch (err) {
+      throw explained(err);
+    }
   }
 });
 

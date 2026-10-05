@@ -9,11 +9,13 @@ That count is not fixed: it is the catalog's, and the catalog moves. `aws_cloudw
 joined it on 2026-09-26, when a connection from a compute node to a bus was added — until then no
 workload could be wired to one, so no variable was emitted and there was nothing to reach.
 `aws_db_proxy` joined it on 2026-10-03 the same way, when a compute node could be connected to a
-proxy as it is to the database behind it.
+proxy as it is to the database behind it. `aws_opensearch_domain` could be connected from
+2026-09-22 and carried only its logical name until 2026-10-05, when the catalog started exporting
+its endpoint.
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 18 send targets and 12 event sources across 22
+**Every applicable AWS resource is implemented**: 19 send targets and 12 event sources across 23
 modules. What remains is the four below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
@@ -72,6 +74,7 @@ The bulk of the work, and mechanical. Each is one file: build a request, sign it
 | `aws_secretsmanager_secret` | `PutSecretValue` — see below | ✓ |
 | `aws_kinesis_video_stream` | `DescribeStream` — reachability only, see below | ✓ |
 | `aws_cloudwatch_event_bus` | `PutEvents` — see below | ✓ |
+| `aws_opensearch_domain` | `PUT /hub_messages/_create/<id>` — see below | ✓ |
 
 **The two parameter stores receive the message, like every other destination here.** They read
 until 2026-09-05, because the wire's generated policy granted reading and nothing else — and a
@@ -110,6 +113,19 @@ permission is there".
 **AppSync is introspected.** Nothing on the wire says what the schema looks like, so there is no
 mutation that could be written blind. Introspection is the one query every GraphQL endpoint
 answers.
+
+**An OpenSearch domain keeps the message as a document of `hub_messages`** — the fields of the
+database row (`providers/record.ts`) plus `stored_at`, at `PUT /hub_messages/_create/<id>`, signed
+for `es` with the workload's role. The id is the hash of what identifies a message, and `_create`
+answers 409 for one already there: a redelivery is not a second document. The index is created with
+its mapping (identifying fields as `keyword`, both times as `date`) the first time a container
+writes to the domain; one that exists is kept, and a role that may not create indexes still writes.
+The catalog exports `ENDPOINT`, and the connection's policy statement grants `es:ESHttp*` on the
+domain's subresources, which is enough on a domain with no access policy of its own. Every domain
+drawn in CloudMan lives in a VPC: the workload has to be in a subnet of it, and the domain's security
+group has to admit it on 443. With fine-grained access control on, the role also has to be mapped
+inside OpenSearch, and the failure says so. OpenSearch Serverless is not reachable: no compute can
+be connected to a collection.
 
 ## Send — a database connection
 
