@@ -14,6 +14,26 @@ AWS account.
 
 ### Added
 
+- A workload can write to an Aurora cluster, three ways. `aws_rds_cluster` is the 22nd module and
+  writes the row an instance wire writes. The compile decides the way per wire, from how each
+  function is drawn: over TCP with the master user's secret; over TCP as an IAM user, when the
+  function's role is granted `rds-db:connect` (`IAM_USER`); or through the RDS Data API, for a
+  function with no network path to the cluster (`DATA_API`), in `providers/dataApi.ts` — the same
+  `Connection` the TCP driver answers, with named parameters, retried while a paused cluster
+  resumes. An engine with no driver (Aurora MySQL) goes through the Data API whenever the cluster
+  has it on; its table is the MySQL one, keyed by the hash of what identifies a message. Over TCP an
+  Aurora cluster gets twenty seconds to accept a connection, the time an auto-paused Serverless v2
+  instance takes to resume. **Contract:** `IAM_USER` and `DATA_API` are new keys, additive, so the
+  contract stays at version 1.
+- IAM database authentication on every way into a database. The token is a SigV4 presigned URL for
+  `rds-db` made with the signer already in the bundle (`providers/rdsIam.ts`), and the test checks
+  it against a signature computed from the specification. A database reached directly that has no
+  such user gets one: logged in with the master secret, the module creates the user, grants it
+  `rds_iam`, and — when the user may not write — creates the table and grants it `INSERT`. Only a
+  user that does not exist is created, because `GRANT rds_iam` ends a password login. Through an RDS
+  Proxy, an `auth` entry with `iam_auth = REQUIRED` makes the wire carry `IAM_AUTH=REQUIRED`, and
+  the client logs in with a token as the user of its secret. **Contract:** `IAM_AUTH` is a new key,
+  additive.
 - A workload can write to a database through an RDS Proxy. `aws_db_proxy` is the 21st module: it
   writes the row an instance wire writes, into the database the proxy is connected to, logging in
   with the secret the proxy checks its clients against. The engine family picks the driver, and a
@@ -127,7 +147,19 @@ AWS account.
   certificate comes from AWS Certificate Manager and chains to an Amazon Root CA, which is in
   Node's list.
 - What a database module writes, and how it reads its credential, moved to
-  `providers/hubMessages.ts`, shared by the instance and the proxy.
+  `providers/hubMessages.ts`, shared by the instance and the proxy. How it logs in — the secret or
+  a token — is now `providers/rdsLogin.ts`, shared by the three database modules.
+- A user that may not create the table still writes into it. `create table if not exists` is
+  checked against the schema before the table is looked for, so it failed for such a user even
+  with the table there — the IAM user, from PostgreSQL 15 on. That refusal (`42501`) is passed over,
+  and the insert decides.
+- A driver failure keeps its SQLSTATE in `code`, besides the text, because some of them are a
+  decision: the one above, and the answers to an IAM token.
+- An AWS error from a REST service that names it only in the `x-amzn-ErrorType` header (the RDS
+  Data API, Lambda's invoke path) is reported by that name instead of the HTTP status.
+- The insert casts the time it stores (`cast($6 as timestamptz)`): the Data API sends a string as
+  `varchar`, which PostgreSQL turns into a timestamp only when told to. `pg` sends it untyped, and
+  the cast types it as the column did.
 
 ### Fixed
 
@@ -173,6 +205,9 @@ AWS account.
 
 ### Next
 
+- A first run of the Aurora paths, IAM login and the Data API against a live database.
+- A MySQL driver over TCP, if one can be had for less than the 1.3 MiB `mysql2` adds to every
+  function bundled; until then a MySQL instance is refused by name.
 - A first run against a real diagram.
 - Container runtime, once the contract has an incoming side.
 - Cloudflare Workers runtime.

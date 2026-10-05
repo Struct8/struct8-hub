@@ -31,8 +31,8 @@ contra uma conta real. Nada aqui foi aplicado a partir de um diagrama.
 | peça | estado |
 |---|---|
 | [Contrato de fiação](CONTRACT.md) v1 | documentado, corresponde ao que o gerador emite hoje |
-| Núcleo (`discovery`, `envelope`, `registry`, `report`) | pronto, 28 testes (300 na suíte) |
-| Recursos AWS | pronto: 21 módulos, 17 destinos de envio, 12 fontes de evento ([cobertura](docs/coverage.md)) |
+| Núcleo (`discovery`, `envelope`, `registry`, `report`) | pronto, 28 testes (340 na suíte) |
+| Recursos AWS | pronto: 22 módulos, 18 destinos de envio, 12 fontes de evento ([cobertura](docs/coverage.md)) |
 | Runtime da AWS Lambda | pronto, invocado de ponta a ponta contra uma conta real |
 | Pacote implantável | pronto: `node scripts/bundle.mjs` produz um zip de 44 KiB |
 | Runtime de contêiner (ECS) | pronto: entrada HTTP, credencial da task role e consumo de SQS por trás do `HUB_POLL` ([por que uma variável](CONTRACT.md#known-gaps)) |

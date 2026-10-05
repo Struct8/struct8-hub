@@ -1,5 +1,5 @@
 import { register } from '../../core/registry.js';
-import { credentialsFrom, store } from '../../providers/hubMessages.js';
+import { write } from '../../providers/hubMessages.js';
 import '../../providers/postgres.js';
 import * as sql from '../../providers/sql.js';
 
@@ -19,7 +19,7 @@ register({
 	// `ENGINE_FAMILY` starts with `ENGINE`, the instance's key. Keys match longest first, so a proxy's
 	// variable reads as the family; the cost is an instance wire whose label starts with `FAMILY_`,
 	// which would read as a family too.
-	keys: ['PORT', 'ENGINE_FAMILY', 'SECRET_ARN', 'DB_NAME'],
+	keys: ['PORT', 'ENGINE_FAMILY', 'SECRET_ARN', 'DB_NAME', 'IAM_USER', 'IAM_AUTH'],
 	capabilities: ['table'],
 
 	/**
@@ -34,6 +34,15 @@ register({
 	 * in to the database with is also the one a client logs in to it with, and the generated policy
 	 * grants the workload `GetSecretValue` on it. DB_NAME comes from the database the proxy fronts:
 	 * the proxy keeps no database name of its own.
+	 *
+	 * IAM_USER is on the wire when the function's role is granted `rds-db:connect` on the proxy, and
+	 * then the client logs in as that user with a token made for the proxy's endpoint
+	 * (providers/rdsLogin.ts). The proxy checks the token and logs in to the database with its own
+	 * secret for that user. No database user is ever created through a proxy.
+	 *
+	 * IAM_AUTH is `REQUIRED` when an auth entry of the proxy refuses passwords. The client still
+	 * reads SECRET_ARN, for the user name only, and logs in as that user with a token; the generator
+	 * grants it `rds-db:connect` on the proxy.
 	 *
 	 * The certificate is the one difference in the handshake, and the driver absorbs it: a proxy's
 	 * comes from AWS Certificate Manager (`trustedAuthorities`, providers/postgres.ts).
@@ -53,8 +62,11 @@ register({
 
 		// Empty under IAM authentication, where a client presents a token instead of a password.
 		const secretArn = n.props['SECRET_ARN'];
-		if (!secretArn) {
-			throw new Error('no secret on the wire: the proxy uses IAM authentication, which this build does not support');
+		const iamUser = n.props['IAM_USER'];
+		if (!secretArn && !iamUser) {
+			throw new Error(
+				'no secret on the wire: the proxy uses IAM authentication, and no IAM user is on the wire (a policy granting rds-db:connect on the proxy names it)'
+			);
 		}
 
 		const database = n.props['DB_NAME'];
@@ -70,12 +82,14 @@ register({
 		const portOnWire = n.props['PORT'];
 		const port = portOnWire ? sql.parseEndpoint(`${host}:${portOnWire}`, engine).port : fromEndpoint;
 
-		const credentials = await credentialsFrom(secretArn, region, ctx.fetch);
-		const connection = await sql.connect(engine, { host, port, database }, credentials);
-		try {
-			await store(connection, envelope, ctx);
-		} finally {
-			await connection.close();
-		}
+		const iamRequired = (n.props['IAM_AUTH'] ?? '').trim().toUpperCase() === 'REQUIRED';
+		await write(
+			engine,
+			{ host, port, database },
+			{ secretArn, iamUser, proxy: true, iamUserInSecret: iamRequired },
+			region,
+			envelope,
+			ctx
+		);
 	},
 });

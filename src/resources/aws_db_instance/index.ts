@@ -1,11 +1,11 @@
 import { register } from '../../core/registry.js';
-import { credentialsFrom, store } from '../../providers/hubMessages.js';
+import { write } from '../../providers/hubMessages.js';
 import '../../providers/postgres.js';
 import * as sql from '../../providers/sql.js';
 
 register({
 	type: 'aws_db_instance',
-	keys: ['DB_NAME', 'SECRET_ARN', 'ENGINE'],
+	keys: ['DB_NAME', 'SECRET_ARN', 'ENGINE', 'IAM_USER'],
 	capabilities: ['table'],
 
 	/**
@@ -16,6 +16,10 @@ register({
 	 * RDS API is never called (it would need a permission the wire does not grant, and an endpoint
 	 * inside the VPC). The engine picks the driver in `providers/sql.ts`; a MySQL arrives as an
 	 * engine with no driver and is refused by name.
+	 *
+	 * AS WHOM? With `IAM_USER` on the wire, as that user with an IAM token; otherwise with the master
+	 * user's secret (providers/rdsLogin.ts). The compile writes `IAM_USER` when the function's role
+	 * is granted `rds-db:connect` on this instance.
 	 *
 	 * The refusal comes before the secret is read: there is no reason to fetch a credential for a
 	 * database this build cannot open.
@@ -30,8 +34,9 @@ register({
 		}
 
 		const secretArn = n.props['SECRET_ARN'];
-		if (!secretArn) {
-			throw new Error('no secret on the wire: the instance has no managed master password');
+		const iamUser = n.props['IAM_USER'];
+		if (!secretArn && !iamUser) {
+			throw new Error('no secret on the wire: the instance has no managed master password, and no IAM user is on the wire');
 		}
 
 		const database = n.props['DB_NAME'];
@@ -43,12 +48,6 @@ register({
 		sql.assertSupported(engine);
 		const { host, port } = sql.parseEndpoint(endpoint, engine);
 
-		const credentials = await credentialsFrom(secretArn, region, ctx.fetch);
-		const connection = await sql.connect(engine, { host, port, database }, credentials);
-		try {
-			await store(connection, envelope, ctx);
-		} finally {
-			await connection.close();
-		}
+		await write(engine, { host, port, database }, { secretArn, iamUser }, region, envelope, ctx);
 	},
 });

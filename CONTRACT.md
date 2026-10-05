@@ -77,7 +77,10 @@ reached is a silent failure: the variable parses, a neighbor appears, and nothin
 | `DB_NAME` | database name |
 | `ENGINE` | the database engine, as the provider names it: `postgres`, `mysql`, `aurora-postgresql` |
 | `ENGINE_FAMILY` | the protocol an RDS Proxy speaks, as the provider names it: `POSTGRESQL`, `MYSQL`, `SQLSERVER` |
-| `PORT` | the port to connect to, where `ENDPOINT` is the host alone (an RDS Proxy) |
+| `PORT` | the port to connect to, where `ENDPOINT` is the host alone (an RDS Proxy, an Aurora cluster) |
+| `IAM_USER` | the database user to log in as with an IAM token — **emitted only when the workload's role is granted `rds-db:connect` on that database for that user** |
+| `IAM_AUTH` | `REQUIRED` when an RDS Proxy refuses passwords: log in with a token as the user `SECRET_ARN` holds — **emitted only then** |
+| `DATA_API` | `true` when the workload has no network path to an Aurora cluster and reaches it through the RDS Data API, at `ARN` — **emitted only then** |
 | `REGION` | the target's region — **emitted only when it differs from the source's** |
 | `ACCOUNT` | the target's account — **emitted only when it differs from the source's** |
 
@@ -87,7 +90,13 @@ New keys come from the target's own resource definition. A target that declares 
 `ENGINE_FAMILY` starts with `ENGINE`, and §2 reads the longer key first. The cost is a variable of
 an instance whose label starts with `FAMILY_`, which is read as a family too.
 
-Note the consequence of the two conditional keys: **absence means "same as mine"**, not "unknown".
+`IAM_USER`, `IAM_AUTH` and `DATA_API` say how to log in, and they belong to the wire, not to the
+database: one cluster serves a function that logs in with the master secret, one that logs in as
+an IAM user and one outside the VPC that goes through the Data API. Absent, the wire logs in with
+`SECRET_ARN`. An Aurora cluster also carries `ARN` whenever its Data API is on, so a consumer with
+no driver for the engine can take that way in from inside the VPC too.
+
+Note the consequence of `REGION` and `ACCOUNT` being conditional: **absence means "same as mine"**, not "unknown".
 A consumer that treats a missing `REGION` as an error will break on the common case.
 
 ## 4. Values

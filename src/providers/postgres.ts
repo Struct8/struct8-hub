@@ -19,7 +19,7 @@ import { rootCertificates } from 'node:tls';
 import pg from 'pg';
 import type { ClientConfig } from 'pg';
 
-import { useDriver, type Connection, type Credentials, type Driver, type Target } from './sql.js';
+import { useDriver, type ConnectOptions, type Connection, type Credentials, type Driver, type Target } from './sql.js';
 
 /**
  * The Amazon certificate authorities, as Lambda ships them.
@@ -98,16 +98,20 @@ const UNTRUSTED = new Set([
  * the two failures that have a cause outside the database get a pointer to it.
  *
  * Nothing here can contain the password: `pg` never puts it in a message, and the credential is
- * not an argument to this function.
+ * not an argument to this function. An IAM token is a password too, and the same holds for it.
  *
  * The pointer to the subnet goes only on a connection that got no answer. An error the server sent
  * proves the network works, and a word in its text is no evidence: the RDS Proxy refusal of
  * `statement_timeout` contains "timeout", and was reported as a routing problem until this was
- * narrowed.
+ * narrowed. After a long wait — the one a caller asks for when the database may be resuming from
+ * a pause — the pointer says that too, because then it is the other likely cause.
+ *
+ * The code stays on the error as `code`, and not only in the text: a caller decides on some of
+ * them (`providers/hubMessages.ts`, `providers/rdsLogin.ts`).
  *
  * Exported for the tests.
  */
-export function describe(err: unknown): Error {
+export function describe(err: unknown, waitedMs: number = CONNECT_TIMEOUT_MS): Error {
 	const e = (err ?? {}) as { code?: unknown; message?: unknown };
 	const code = typeof e.code === 'string' ? e.code : '';
 	const message = typeof e.message === 'string' && e.message ? e.message : String(err);
@@ -117,10 +121,14 @@ export function describe(err: unknown): Error {
 	if (UNTRUSTED.has(code)) {
 		hint = ' (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)';
 	} else if (!fromServer && (code === 'ETIMEDOUT' || message === CONNECT_TIMEOUT_MESSAGE)) {
-		hint = ' (the function has to be in a subnet that can reach the database)';
+		hint =
+			waitedMs > CONNECT_TIMEOUT_MS
+				? ` (no answer in ${Math.round(waitedMs / 1000)} s: the function has to be in a subnet that can reach the database, or the database took longer than that to resume from a pause)`
+				: ' (the function has to be in a subnet that can reach the database)';
 	}
 
-	return new Error(`${code ? `${code}: ` : ''}${message}${hint}`);
+	const described = new Error(`${code ? `${code}: ` : ''}${message}${hint}`);
+	return code ? Object.assign(described, { code }) : described;
 }
 
 /**
@@ -130,21 +138,27 @@ export function describe(err: unknown): Error {
  * server before the password does, and an RDS Proxy refuses a parameter it does not support
  * instead of ignoring it (see QUERY_TIMEOUT_MS).
  */
-export const clientConfig = (target: Target, credentials: Credentials, ca: string[] | undefined): ClientConfig => ({
+export const clientConfig = (
+	target: Target,
+	credentials: Credentials,
+	ca: string[] | undefined,
+	connectTimeoutMs: number = CONNECT_TIMEOUT_MS
+): ClientConfig => ({
 	host: target.host,
 	port: target.port,
 	database: target.database,
 	user: credentials.user,
 	password: credentials.password,
 	ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
-	connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+	connectionTimeoutMillis: connectTimeoutMs,
 	query_timeout: QUERY_TIMEOUT_MS,
 	application_name: 'struct8-hub',
 });
 
 const driver: Driver = {
-	async connect(target: Target, credentials: Credentials): Promise<Connection> {
-		const client = new pg.Client(clientConfig(target, credentials, trustedAuthorities(authorities())));
+	async connect(target: Target, credentials: Credentials, options?: ConnectOptions): Promise<Connection> {
+		const waitMs = options?.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+		const client = new pg.Client(clientConfig(target, credentials, trustedAuthorities(authorities()), waitMs));
 
 		// An error on an idle connection is an event, and an event nobody listens to is an
 		// uncaught exception. The statement that was running reports its own failure.
@@ -154,7 +168,7 @@ const driver: Driver = {
 			await client.connect();
 		} catch (err) {
 			await client.end().catch(() => {});
-			throw describe(err);
+			throw describe(err, waitMs);
 		}
 
 		return {

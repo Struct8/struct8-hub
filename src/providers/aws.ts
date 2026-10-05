@@ -111,10 +111,14 @@ export const endpoint = (service: string, region: string): string =>
 async function fail(res: Response, what: string): Promise<never> {
 	const body = await res.text().catch(() => '');
 
+	// The REST services that answer in JSON (the RDS Data API, Lambda's invoke path) name the error
+	// in a header and put only the message in the body: `BadRequestException:http://internal...`.
+	const named = res.headers.get('x-amzn-errortype')?.split(':')[0] || undefined;
+
 	if (body.startsWith('{')) {
 		try {
 			const json = JSON.parse(body) as Record<string, unknown>;
-			const code = String(json['__type'] ?? json['code'] ?? res.status).split('#').pop();
+			const code = String(json['__type'] ?? json['code'] ?? named ?? res.status).split('#').pop();
 			const message = json['message'] ?? json['Message'] ?? '';
 			throw new Error(`${code}: ${message || what}`);
 		} catch (err) {
@@ -227,6 +231,19 @@ export async function query(
 		params['Action'] ?? service,
 		fetchImpl
 	);
+}
+
+/**
+ * A presigned URL: the signature travels in the query string instead of a header, and the URL is
+ * the whole credential.
+ *
+ * Nothing is sent. An RDS database reads such a URL as a password (`providers/rdsIam.ts`), and
+ * making one is local work — which is why it costs no network call and works from a subnet that
+ * reaches nothing but the database.
+ */
+export async function presign(url: string, service: string, region: string): Promise<string> {
+	const signed = await signer().sign(url, { method: 'GET', aws: { service, region, signQuery: true } });
+	return signed.url;
 }
 
 /** Plain REST: S3, Lambda's invoke path, and anything else addressed by URL rather than by action. */

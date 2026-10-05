@@ -1979,12 +1979,12 @@ var require_result = __commonJS({
         const row = { ...this._prebuiltEmptyResultObject };
         for (let i = 0, len = rowData.length; i < len; i++) {
           const rawValue = rowData[i];
-          const field = this.fields[i].name;
+          const field2 = this.fields[i].name;
           if (rawValue !== null) {
             const v = this.fields[i].format === "binary" ? Buffer.from(rawValue) : rawValue;
-            row[field] = this._parsers[i](v);
+            row[field2] = this._parsers[i](v);
           } else {
-            row[field] = null;
+            row[field2] = null;
           }
         }
         return row;
@@ -2093,23 +2093,23 @@ var require_query = __commonJS({
           this._result.addRow(row);
         }
       }
-      handleCommandComplete(msg, connection) {
+      handleCommandComplete(msg, connection2) {
         this._checkForMultirow();
         this._result.addCommandComplete(msg);
         if (this.rows) {
-          connection.sync();
+          connection2.sync();
         }
       }
       // if a named prepared statement is created with empty query text
       // the backend will send an emptyQuery message but *not* a command complete message
       // since we pipeline sync immediately after execute we don't need to do anything here
       // unless we have rows specified, in which case we did not pipeline the initial sync call
-      handleEmptyQuery(connection) {
+      handleEmptyQuery(connection2) {
         if (this.rows) {
-          connection.sync();
+          connection2.sync();
         }
       }
-      handleError(err, connection) {
+      handleError(err, connection2) {
         if (this._canceledDueToError) {
           err = this._canceledDueToError;
           this._canceledDueToError = false;
@@ -2134,11 +2134,11 @@ var require_query = __commonJS({
         }
         this.emit("end", this._results);
       }
-      submit(connection) {
+      submit(connection2) {
         if (typeof this.text !== "string" && typeof this.name !== "string") {
           return new Error("A query must have either text or a name. Supplying neither is unsupported.");
         }
-        const previous = connection.parsedStatements[this.name] || connection.submittedNamedStatements[this.name];
+        const previous = connection2.parsedStatements[this.name] || connection2.submittedNamedStatements[this.name];
         if (this.text && previous && this.text !== previous) {
           return new Error(`Prepared statements must be unique - '${this.name}' was used for a different statement`);
         }
@@ -2146,48 +2146,48 @@ var require_query = __commonJS({
           return new Error("Query values must be an array");
         }
         if (this.requiresPreparation()) {
-          connection.stream.cork && connection.stream.cork();
+          connection2.stream.cork && connection2.stream.cork();
           try {
-            this.prepare(connection);
+            this.prepare(connection2);
           } finally {
-            connection.stream.uncork && connection.stream.uncork();
+            connection2.stream.uncork && connection2.stream.uncork();
           }
         } else {
-          connection.query(this.text);
+          connection2.query(this.text);
         }
         return null;
       }
-      hasBeenParsed(connection) {
-        return this.name && (connection.parsedStatements[this.name] !== void 0 || connection.submittedNamedStatements[this.name] !== void 0);
+      hasBeenParsed(connection2) {
+        return this.name && (connection2.parsedStatements[this.name] !== void 0 || connection2.submittedNamedStatements[this.name] !== void 0);
       }
-      handlePortalSuspended(connection) {
-        this._getRows(connection, this.rows);
+      handlePortalSuspended(connection2) {
+        this._getRows(connection2, this.rows);
       }
-      _getRows(connection, rows) {
-        connection.execute({
+      _getRows(connection2, rows) {
+        connection2.execute({
           portal: this.portal,
           rows
         });
         if (!rows) {
-          connection.sync();
+          connection2.sync();
         } else {
-          connection.flush();
+          connection2.flush();
         }
       }
       // http://developer.postgresql.org/pgdocs/postgres/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY
-      prepare(connection) {
-        if (!this.hasBeenParsed(connection)) {
-          connection.parse({
+      prepare(connection2) {
+        if (!this.hasBeenParsed(connection2)) {
+          connection2.parse({
             text: this.text,
             name: this.name,
             types: this.types
           });
           if (this.name) {
-            connection.submittedNamedStatements[this.name] = this.text;
+            connection2.submittedNamedStatements[this.name] = this.text;
           }
         }
         try {
-          connection.bind({
+          connection2.bind({
             portal: this.portal,
             statement: this.name,
             values: this.values,
@@ -2195,21 +2195,21 @@ var require_query = __commonJS({
             valueMapper: utils.prepareValue
           });
         } catch (err) {
-          connection.close({ type: "S", name: this.name });
-          connection.sync();
-          this.handleError(err, connection);
+          connection2.close({ type: "S", name: this.name });
+          connection2.sync();
+          this.handleError(err, connection2);
           return;
         }
-        connection.describe({
+        connection2.describe({
           type: "P",
           name: this.portal || ""
         });
-        this._getRows(connection, this.rows);
+        this._getRows(connection2, this.rows);
       }
-      handleCopyInResponse(connection) {
-        connection.sendCopyFail("No source stream defined");
+      handleCopyInResponse(connection2) {
+        connection2.sendCopyFail("No source stream defined");
       }
-      handleCopyData(msg, connection) {
+      handleCopyData(msg, connection2) {
       }
     };
     module.exports = Query2;
@@ -2651,7 +2651,7 @@ var require_serializer = __commonJS({
       68
       /* code.describe */
     );
-    var describe2 = (msg) => {
+    var describe3 = (msg) => {
       return msg.name ? cstringMessage(68, `${msg.type}${msg.name || ""}`) : msg.type === "P" ? emptyDescribePortal : emptyDescribeStatement;
     };
     var close = (msg) => {
@@ -2694,7 +2694,7 @@ var require_serializer = __commonJS({
       parse,
       bind,
       execute,
-      describe: describe2,
+      describe: describe3,
       close,
       flush: () => flushBuffer,
       sync: () => syncBuffer,
@@ -3541,13 +3541,13 @@ var require_helper = __commonJS({
       return true;
     };
     var matcher = module.exports.match = function(connInfo, entry) {
-      return fieldNames.slice(0, -1).reduce(function(prev, field, idx) {
+      return fieldNames.slice(0, -1).reduce(function(prev, field2, idx) {
         if (idx == 1) {
-          if (Number(connInfo[field] || defaultPort) === Number(entry[field])) {
+          if (Number(connInfo[field2] || defaultPort) === Number(entry[field2])) {
             return prev && true;
           }
         }
-        return prev && (entry[field] === "*" || entry[field] === connInfo[field]);
+        return prev && (entry[field2] === "*" || entry[field2] === connInfo[field2]);
       }, true);
     };
     module.exports.getPassword = function(connInfo, stream, cb) {
@@ -3584,11 +3584,11 @@ var require_helper = __commonJS({
       var obj = {};
       var isLastField = false;
       var addToObj = function(idx, i0, i1) {
-        var field = line.substring(i0, i1);
+        var field2 = line.substring(i0, i1);
         if (!Object.hasOwnProperty.call(process.env, "PGPASS_NO_DEESCAPE")) {
-          field = field.replace(/\\([:\\])/g, "$1");
+          field2 = field2.replace(/\\([:\\])/g, "$1");
         }
-        obj[fieldNames[idx]] = field;
+        obj[fieldNames[idx]] = field2;
       };
       for (var i = 0; i < line.length - 1; i += 1) {
         curChar = line.charAt(i + 1);
@@ -5955,10 +5955,11 @@ function setTraceHeader(header) {
 var endpoint = (service, region) => `https://${service}.${region}.amazonaws.com`;
 async function fail(res, what) {
   const body = await res.text().catch(() => "");
+  const named2 = res.headers.get("x-amzn-errortype")?.split(":")[0] || void 0;
   if (body.startsWith("{")) {
     try {
       const json2 = JSON.parse(body);
-      const code2 = String(json2["__type"] ?? json2["code"] ?? res.status).split("#").pop();
+      const code2 = String(json2["__type"] ?? json2["code"] ?? named2 ?? res.status).split("#").pop();
       const message = json2["message"] ?? json2["Message"] ?? "";
       throw new Error(`${code2}: ${message || what}`);
     } catch (err) {
@@ -6012,6 +6013,10 @@ async function query(service, region, params, fetchImpl = fetch) {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params).toString()
   }, params["Action"] ?? service, fetchImpl);
+}
+async function presign(url, service, region) {
+  const signed = await signer().sign(url, { method: "GET", aws: { service, region, signQuery: true } });
+  return signed.url;
 }
 var rest = (url, service, region, init, what, fetchImpl = fetch) => send(url, service, region, init, what, fetchImpl);
 async function plain(url, init, what, fetchImpl = fetch) {
@@ -6325,22 +6330,90 @@ register({
   }
 });
 
-// dist/providers/hubMessages.js
-var CREATE_TABLE = `create table if not exists hub_messages (
-	trace      text        not null,
-	path       text        not null,
-	receiver   text        not null,
-	digest     text        not null,
-	hops       integer     not null,
-	sent_at    timestamptz not null,
-	body       text        not null,
-	stored_at  timestamptz not null default now(),
-	primary key (trace, path, receiver, digest)
-)`;
-var INSERT = `insert into hub_messages (trace, path, receiver, digest, hops, sent_at, body)
-	values ($1, $2, $3, $4, $5, $6, $7)
-	on conflict do nothing`;
-var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+// dist/providers/rdsIam.js
+var TOKEN_SECONDS = 900;
+async function authToken(host, port, user, region) {
+  const url = new URL(`https://${host}:${port}/`);
+  url.searchParams.set("Action", "connect");
+  url.searchParams.set("DBUser", user);
+  url.searchParams.set("X-Amz-Expires", String(TOKEN_SECONDS));
+  const signed = await presign(url.toString(), "rds-db", region);
+  return signed.replace(/^https:\/\//, "");
+}
+
+// dist/providers/sql.js
+var codeOf = (err) => {
+  const code = err?.code;
+  return typeof code === "string" ? code : "";
+};
+var FAMILIES = {
+  postgres: "postgres",
+  "aurora-postgresql": "postgres"
+};
+var DEFAULT_PORTS = {
+  postgres: 5432
+};
+var drivers = /* @__PURE__ */ new Map();
+function useDriver(family, driver2) {
+  drivers.set(family, driver2);
+}
+var familyOf = (engine) => FAMILIES[engine.trim().toLowerCase()];
+var DIALECTS = {
+  postgres: "postgres",
+  "aurora-postgresql": "postgres",
+  mysql: "mysql",
+  mariadb: "mysql",
+  "aurora-mysql": "mysql",
+  aurora: "mysql"
+};
+var dialectOf = (engine) => DIALECTS[engine.trim().toLowerCase()];
+var canConnect = (engine) => {
+  const family = familyOf(engine);
+  return family !== void 0 && drivers.has(family);
+};
+function assertSupported(engine) {
+  const family = familyOf(engine);
+  if (!family) {
+    throw new Error(`no driver for the "${engine}" engine in this build (supported: ${[...new Set(Object.values(FAMILIES))].join(", ")})`);
+  }
+  if (!drivers.has(family)) {
+    throw new Error(`the ${family} driver is not loaded in this build`);
+  }
+  return family;
+}
+async function connect(engine, target, credentials, options) {
+  const family = assertSupported(engine);
+  return drivers.get(family).connect(target, credentials, options);
+}
+function parseEndpoint(raw, engine) {
+  const authority = raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0] ?? "";
+  const colon = authority.lastIndexOf(":");
+  const host = colon === -1 ? authority : authority.slice(0, colon);
+  if (!host)
+    throw new Error(`the endpoint ${JSON.stringify(raw)} has no host`);
+  if (colon === -1) {
+    const port2 = DEFAULT_PORTS[familyOf(engine) ?? ""];
+    if (port2 === void 0)
+      throw new Error(`the endpoint ${JSON.stringify(raw)} has no port and the engine has no default`);
+    return { host, port: port2 };
+  }
+  const port = Number(authority.slice(colon + 1));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`the endpoint ${JSON.stringify(raw)} has an invalid port`);
+  }
+  return { host, port };
+}
+
+// dist/providers/rdsLogin.js
+var NOT_AN_IAM_USER = "28P01";
+var TOKEN_REFUSED = "28000";
+var PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+function quoted(user) {
+  if (!PLAIN_NAME.test(user)) {
+    throw new Error(`the database user ${JSON.stringify(user)} cannot be set up from here: only letters, digits and underscores`);
+  }
+  return `"${user}"`;
+}
 async function credentialsFrom(secretArn, region, fetchImpl) {
   const answer = await json("secretsmanager", region, "secretsmanager.GetSecretValue", { SecretId: secretArn }, fetchImpl);
   let parsed = null;
@@ -6356,24 +6429,196 @@ async function credentialsFrom(secretArn, region, fetchImpl) {
   }
   return { user: parsed.username, password: parsed.password };
 }
-async function ensureTable(connection) {
+function hinted(err, hint) {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = codeOf(err);
+  const described = new Error(`${message} (${hint})`);
+  return code ? Object.assign(described, { code }) : described;
+}
+async function asSecretUser(engine, target, secretArn, region, fetchImpl, options) {
+  const credentials = await credentialsFrom(secretArn, region, fetchImpl);
+  return connect(engine, target, credentials, options);
+}
+function createIamUser(user) {
+  const role = quoted(user);
+  return `do $$
+begin
+	if exists (select from pg_catalog.pg_roles where rolname = '${user}') then
+		if not pg_catalog.pg_has_role('${user}', 'rds_iam', 'member') then
+			raise exception 'the user ${user} exists and logs in with a password; granting it rds_iam would end that, so it is left as it is';
+		end if;
+		return;
+	end if;
+	begin
+		create role ${role} login;
+	exception when duplicate_object then
+		null;
+	end;
+	grant rds_iam to ${role};
+end
+$$`;
+}
+async function provisionIamUser(engine, target, user, secretArn, region, fetchImpl, options) {
+  const statement = createIamUser(user);
+  if (dialectOf(engine) !== "postgres") {
+    throw new Error(`the database has no user ${user} that logs in by IAM, and creating one is written for PostgreSQL only`);
+  }
+  const credentials = await credentialsFrom(secretArn, region, fetchImpl);
+  if (credentials.user === user) {
+    throw new Error(`${user} is the master user: granting it rds_iam would end the password login the secret depends on`);
+  }
+  const connection2 = await connect(engine, target, credentials, options);
   try {
-    await connection.run(CREATE_TABLE);
-  } catch {
-    await connection.run(CREATE_TABLE);
+    await connection2.run(statement);
+  } finally {
+    await connection2.close();
   }
 }
-async function store(connection, envelope, ctx) {
-  await ensureTable(connection);
-  await connection.run(INSERT, [
-    envelope.trace,
-    envelope.path.join(" > "),
-    ctx.self,
-    await sha256(envelope.body),
-    envelope.hops,
-    envelope.at,
-    envelope.body
-  ]);
+async function open2(engine, target, login, region, fetchImpl, options) {
+  let named2 = login.iamUser;
+  if (!named2) {
+    if (!login.secretArn)
+      throw new Error("no secret and no IAM user on the wire: nothing to log in with");
+    if (!login.iamUserInSecret)
+      return asSecretUser(engine, target, login.secretArn, region, fetchImpl, options);
+    named2 = (await credentialsFrom(login.secretArn, region, fetchImpl)).user;
+  }
+  const user = named2;
+  const withToken = async () => connect(engine, target, { user, password: await authToken(target.host, target.port, user, region) }, options);
+  const explained = (err) => {
+    const code = codeOf(err);
+    if (code !== NOT_AN_IAM_USER && code !== TOKEN_REFUSED)
+      return err;
+    if (code === NOT_AN_IAM_USER && !login.proxy) {
+      return hinted(err, `the database has no user ${user} that logs in by IAM: CREATE USER ${user}; GRANT rds_iam TO ${user};`);
+    }
+    return hinted(err, login.proxy ? `the proxy refused the token for ${user}: the function's role needs rds-db:connect on the proxy, and its auth entry for ${user} IAM authentication` : `the database refused the token for ${user}: the function's role needs rds-db:connect on dbuser:<resource id>/${user}, and the database IAM authentication turned on`);
+  };
+  try {
+    return await withToken();
+  } catch (err) {
+    if (codeOf(err) !== NOT_AN_IAM_USER || login.proxy || !login.secretArn)
+      throw explained(err);
+  }
+  await provisionIamUser(engine, target, user, login.secretArn, region, fetchImpl, options);
+  try {
+    return await withToken();
+  } catch (err) {
+    throw explained(err);
+  }
+}
+
+// dist/providers/hubMessages.js
+var sha256 = async (text) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+var columns = async (envelope, ctx) => ({
+  trace: envelope.trace,
+  path: envelope.path.join(" > "),
+  receiver: ctx.self,
+  digest: await sha256(envelope.body),
+  hops: envelope.hops,
+  at: envelope.at,
+  body: envelope.body
+});
+var POSTGRES = {
+  create: `create table if not exists hub_messages (
+	trace      text        not null,
+	path       text        not null,
+	receiver   text        not null,
+	digest     text        not null,
+	hops       integer     not null,
+	sent_at    timestamptz not null,
+	body       text        not null,
+	stored_at  timestamptz not null default now(),
+	primary key (trace, path, receiver, digest)
+)`,
+  insert: `insert into hub_messages (trace, path, receiver, digest, hops, sent_at, body)
+	values ($1, $2, $3, $4, $5, cast($6 as timestamptz), $7)
+	on conflict do nothing`,
+  async row(envelope, ctx) {
+    const c = await columns(envelope, ctx);
+    return [c.trace, c.path, c.receiver, c.digest, c.hops, c.at, c.body];
+  }
+};
+var MYSQL = {
+  create: `create table if not exists hub_messages (
+	id         char(64)     not null,
+	trace      varchar(255) not null,
+	path       text         not null,
+	receiver   varchar(255) not null,
+	digest     char(64)     not null,
+	hops       integer      not null,
+	sent_at    datetime(3)  not null,
+	body       longtext     not null,
+	stored_at  datetime(3)  not null default current_timestamp(3),
+	primary key (id)
+)`,
+  insert: `insert ignore into hub_messages (id, trace, path, receiver, digest, hops, sent_at, body)
+	values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+  async row(envelope, ctx) {
+    const c = await columns(envelope, ctx);
+    const id = await sha256([c.trace, c.path, c.receiver, c.digest].join("\n"));
+    const when = new Date(c.at);
+    const sentAt = Number.isNaN(when.getTime()) ? c.at : when.toISOString().replace("T", " ").replace("Z", "");
+    return [id, c.trace, c.path, c.receiver, c.digest, c.hops, sentAt, c.body];
+  }
+};
+var STATEMENTS = { postgres: POSTGRES, mysql: MYSQL };
+var mayNotCreate = (err) => {
+  const code = codeOf(err);
+  if (code === "42501")
+    return true;
+  return code === "42000" && err instanceof Error && /command denied/i.test(err.message);
+};
+async function ensureTable(connection2, dialect = "postgres") {
+  const create = STATEMENTS[dialect].create;
+  try {
+    await connection2.run(create);
+  } catch (err) {
+    if (mayNotCreate(err))
+      return;
+    try {
+      await connection2.run(create);
+    } catch (again) {
+      if (mayNotCreate(again))
+        return;
+      throw again;
+    }
+  }
+}
+async function store(connection2, envelope, ctx, dialect = "postgres") {
+  await ensureTable(connection2, dialect);
+  const statements = STATEMENTS[dialect];
+  await connection2.run(statements.insert, await statements.row(envelope, ctx));
+}
+var NEEDS_GRANT = /* @__PURE__ */ new Set(["42P01", "42501"]);
+async function grantTable(engine, target, user, secretArn, region, fetchImpl, options) {
+  const connection2 = await asSecretUser(engine, target, secretArn, region, fetchImpl, options);
+  try {
+    await ensureTable(connection2, "postgres");
+    await connection2.run(`grant insert on hub_messages to ${quoted(user)}`);
+  } finally {
+    await connection2.close();
+  }
+}
+async function write(engine, target, login, region, envelope, ctx, options) {
+  const once = async () => {
+    const connection2 = await open2(engine, target, login, region, ctx.fetch, options);
+    try {
+      await store(connection2, envelope, ctx);
+    } finally {
+      await connection2.close();
+    }
+  };
+  try {
+    await once();
+    return;
+  } catch (err) {
+    const fixable = login.iamUser && login.secretArn && !login.proxy && dialectOf(engine) === "postgres" && NEEDS_GRANT.has(codeOf(err));
+    if (!fixable)
+      throw err;
+  }
+  await grantTable(engine, target, login.iamUser, login.secretArn, region, ctx.fetch, options);
+  await once();
 }
 
 // dist/providers/postgres.js
@@ -6395,52 +6640,6 @@ var TypeOverrides = import_lib.default.TypeOverrides;
 var defaults = import_lib.default.defaults;
 var esm_default = import_lib.default;
 
-// dist/providers/sql.js
-var FAMILIES = {
-  postgres: "postgres",
-  "aurora-postgresql": "postgres"
-};
-var DEFAULT_PORTS = {
-  postgres: 5432
-};
-var drivers = /* @__PURE__ */ new Map();
-function useDriver(family, driver2) {
-  drivers.set(family, driver2);
-}
-var familyOf = (engine) => FAMILIES[engine.trim().toLowerCase()];
-function assertSupported(engine) {
-  const family = familyOf(engine);
-  if (!family) {
-    throw new Error(`no driver for the "${engine}" engine in this build (supported: ${[...new Set(Object.values(FAMILIES))].join(", ")})`);
-  }
-  if (!drivers.has(family)) {
-    throw new Error(`the ${family} driver is not loaded in this build`);
-  }
-  return family;
-}
-async function connect(engine, target, credentials) {
-  const family = assertSupported(engine);
-  return drivers.get(family).connect(target, credentials);
-}
-function parseEndpoint(raw, engine) {
-  const authority = raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0] ?? "";
-  const colon = authority.lastIndexOf(":");
-  const host = colon === -1 ? authority : authority.slice(0, colon);
-  if (!host)
-    throw new Error(`the endpoint ${JSON.stringify(raw)} has no host`);
-  if (colon === -1) {
-    const port2 = DEFAULT_PORTS[familyOf(engine) ?? ""];
-    if (port2 === void 0)
-      throw new Error(`the endpoint ${JSON.stringify(raw)} has no port and the engine has no default`);
-    return { host, port: port2 };
-  }
-  const port = Number(authority.slice(colon + 1));
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`the endpoint ${JSON.stringify(raw)} has an invalid port`);
-  }
-  return { host, port };
-}
-
 // dist/providers/postgres.js
 var LAMBDA_CA_BUNDLE = "/var/runtime/ca-cert.pem";
 var trustedAuthorities = (bundle) => bundle ? [...rootCertificates, bundle] : void 0;
@@ -6461,7 +6660,7 @@ var UNTRUSTED = /* @__PURE__ */ new Set([
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
   "CERT_HAS_EXPIRED"
 ]);
-function describe(err) {
+function describe(err, waitedMs = CONNECT_TIMEOUT_MS) {
   const e = err ?? {};
   const code = typeof e.code === "string" ? e.code : "";
   const message = typeof e.message === "string" && e.message ? e.message : String(err);
@@ -6470,24 +6669,26 @@ function describe(err) {
   if (UNTRUSTED.has(code)) {
     hint = " (the runtime does not trust the database certificate authority; on Lambda the Amazon bundle is /var/runtime/ca-cert.pem)";
   } else if (!fromServer && (code === "ETIMEDOUT" || message === CONNECT_TIMEOUT_MESSAGE)) {
-    hint = " (the function has to be in a subnet that can reach the database)";
+    hint = waitedMs > CONNECT_TIMEOUT_MS ? ` (no answer in ${Math.round(waitedMs / 1e3)} s: the function has to be in a subnet that can reach the database, or the database took longer than that to resume from a pause)` : " (the function has to be in a subnet that can reach the database)";
   }
-  return new Error(`${code ? `${code}: ` : ""}${message}${hint}`);
+  const described = new Error(`${code ? `${code}: ` : ""}${message}${hint}`);
+  return code ? Object.assign(described, { code }) : described;
 }
-var clientConfig = (target, credentials, ca) => ({
+var clientConfig = (target, credentials, ca, connectTimeoutMs = CONNECT_TIMEOUT_MS) => ({
   host: target.host,
   port: target.port,
   database: target.database,
   user: credentials.user,
   password: credentials.password,
   ssl: { rejectUnauthorized: true, ...ca ? { ca } : {} },
-  connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+  connectionTimeoutMillis: connectTimeoutMs,
   query_timeout: QUERY_TIMEOUT_MS,
   application_name: "struct8-hub"
 });
 var driver = {
-  async connect(target, credentials) {
-    const client2 = new esm_default.Client(clientConfig(target, credentials, trustedAuthorities(authorities())));
+  async connect(target, credentials, options) {
+    const waitMs = options?.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+    const client2 = new esm_default.Client(clientConfig(target, credentials, trustedAuthorities(authorities()), waitMs));
     client2.on("error", () => {
     });
     try {
@@ -6495,7 +6696,7 @@ var driver = {
     } catch (err) {
       await client2.end().catch(() => {
       });
-      throw describe(err);
+      throw describe(err, waitMs);
     }
     return {
       async run(text, params = []) {
@@ -6517,7 +6718,7 @@ useDriver("postgres", driver);
 // dist/resources/aws_db_instance/index.js
 register({
   type: "aws_db_instance",
-  keys: ["DB_NAME", "SECRET_ARN", "ENGINE"],
+  keys: ["DB_NAME", "SECRET_ARN", "ENGINE", "IAM_USER"],
   capabilities: ["table"],
   /**
    * Writes the message into `hub_messages` (providers/hubMessages.ts).
@@ -6527,6 +6728,10 @@ register({
    * RDS API is never called (it would need a permission the wire does not grant, and an endpoint
    * inside the VPC). The engine picks the driver in `providers/sql.ts`; a MySQL arrives as an
    * engine with no driver and is refused by name.
+   *
+   * AS WHOM? With `IAM_USER` on the wire, as that user with an IAM token; otherwise with the master
+   * user's secret (providers/rdsLogin.ts). The compile writes `IAM_USER` when the function's role
+   * is granted `rds-db:connect` on this instance.
    *
    * The refusal comes before the secret is read: there is no reason to fetch a credential for a
    * database this build cannot open.
@@ -6540,8 +6745,9 @@ register({
       throw new Error("no engine on the wire: the diagram was compiled before the engine was exported, compile it again");
     }
     const secretArn = n.props["SECRET_ARN"];
-    if (!secretArn) {
-      throw new Error("no secret on the wire: the instance has no managed master password");
+    const iamUser = n.props["IAM_USER"];
+    if (!secretArn && !iamUser) {
+      throw new Error("no secret on the wire: the instance has no managed master password, and no IAM user is on the wire");
     }
     const database = n.props["DB_NAME"];
     if (!database)
@@ -6551,13 +6757,7 @@ register({
       throw new Error("no region for the database and none for the workload");
     assertSupported(engine);
     const { host, port } = parseEndpoint(endpoint2, engine);
-    const credentials = await credentialsFrom(secretArn, region, ctx.fetch);
-    const connection = await connect(engine, { host, port, database }, credentials);
-    try {
-      await store(connection, envelope, ctx);
-    } finally {
-      await connection.close();
-    }
+    await write(engine, { host, port, database }, { secretArn, iamUser }, region, envelope, ctx);
   }
 });
 
@@ -6572,7 +6772,7 @@ register({
   // `ENGINE_FAMILY` starts with `ENGINE`, the instance's key. Keys match longest first, so a proxy's
   // variable reads as the family; the cost is an instance wire whose label starts with `FAMILY_`,
   // which would read as a family too.
-  keys: ["PORT", "ENGINE_FAMILY", "SECRET_ARN", "DB_NAME"],
+  keys: ["PORT", "ENGINE_FAMILY", "SECRET_ARN", "DB_NAME", "IAM_USER", "IAM_AUTH"],
   capabilities: ["table"],
   /**
    * Writes the message into `hub_messages` (providers/hubMessages.ts) through the proxy: the table
@@ -6586,6 +6786,15 @@ register({
    * in to the database with is also the one a client logs in to it with, and the generated policy
    * grants the workload `GetSecretValue` on it. DB_NAME comes from the database the proxy fronts:
    * the proxy keeps no database name of its own.
+   *
+   * IAM_USER is on the wire when the function's role is granted `rds-db:connect` on the proxy, and
+   * then the client logs in as that user with a token made for the proxy's endpoint
+   * (providers/rdsLogin.ts). The proxy checks the token and logs in to the database with its own
+   * secret for that user. No database user is ever created through a proxy.
+   *
+   * IAM_AUTH is `REQUIRED` when an auth entry of the proxy refuses passwords. The client still
+   * reads SECRET_ARN, for the user name only, and logs in as that user with a token; the generator
+   * grants it `rds-db:connect` on the proxy.
    *
    * The certificate is the one difference in the handshake, and the driver absorbs it: a proxy's
    * comes from AWS Certificate Manager (`trustedAuthorities`, providers/postgres.ts).
@@ -6604,8 +6813,9 @@ register({
     if (!engine)
       throw new Error(`${JSON.stringify(family)} is not an RDS Proxy engine family`);
     const secretArn = n.props["SECRET_ARN"];
-    if (!secretArn) {
-      throw new Error("no secret on the wire: the proxy uses IAM authentication, which this build does not support");
+    const iamUser = n.props["IAM_USER"];
+    if (!secretArn && !iamUser) {
+      throw new Error("no secret on the wire: the proxy uses IAM authentication, and no IAM user is on the wire (a policy granting rds-db:connect on the proxy names it)");
     }
     const database = n.props["DB_NAME"];
     if (!database) {
@@ -6618,13 +6828,8 @@ register({
     const { host, port: fromEndpoint } = parseEndpoint(endpoint2, engine);
     const portOnWire = n.props["PORT"];
     const port = portOnWire ? parseEndpoint(`${host}:${portOnWire}`, engine).port : fromEndpoint;
-    const credentials = await credentialsFrom(secretArn, region, ctx.fetch);
-    const connection = await connect(engine, { host, port, database }, credentials);
-    try {
-      await store(connection, envelope, ctx);
-    } finally {
-      await connection.close();
-    }
+    const iamRequired = (n.props["IAM_AUTH"] ?? "").trim().toUpperCase() === "REQUIRED";
+    await write(engine, { host, port, database }, { secretArn, iamUser, proxy: true, iamUserInSecret: iamRequired }, region, envelope, ctx);
   }
 });
 
@@ -6857,6 +7062,145 @@ register({
       describe: `ALB ${event?.httpMethod ?? "?"} ${event?.path ?? "/"} \u2192 ${target}`,
       items: [{ body }]
     };
+  }
+});
+
+// dist/providers/dataApi.js
+var RESUME_WAITS_MS = [2e3, 3e3, 5e3, 5e3, 5e3, 5e3];
+var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var named = (text) => text.replace(/\$(\d+)/g, ":p$1");
+function field(value) {
+  if (value === null || value === void 0)
+    return { isNull: true };
+  if (typeof value === "boolean")
+    return { booleanValue: value };
+  if (typeof value === "number")
+    return Number.isInteger(value) ? { longValue: value } : { doubleValue: value };
+  return { stringValue: String(value) };
+}
+var resuming = (err) => err instanceof Error && /^DatabaseResumingException\b/.test(err.message);
+function describe2(err) {
+  if (err instanceof TypeError) {
+    const cause = err.cause;
+    const why = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : err.message;
+    return new Error(`the Data API did not answer (${why}): a function in a VPC reaches it through a NAT gateway or an rds-data interface endpoint`);
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  let hint = "";
+  if (/^(AccessDeniedException|ForbiddenException)\b/.test(message)) {
+    hint = " (the function's role needs rds-data:ExecuteStatement on the cluster and secretsmanager:GetSecretValue on its secret)";
+  } else if (/HttpEndpoint is not enabled/i.test(message)) {
+    hint = " (turn on the Data API of the cluster: enable_http_endpoint)";
+  }
+  const described = new Error(`${message}${hint}`);
+  const code = /SQLState: ([0-9A-Z]{5})/.exec(message)?.[1];
+  return code ? Object.assign(described, { code }) : described;
+}
+function connection(target, fetchImpl, options = {}) {
+  const sleep = options.sleep ?? pause;
+  return {
+    async run(text, params = []) {
+      const body = JSON.stringify({
+        resourceArn: target.resourceArn,
+        secretArn: target.secretArn,
+        database: target.database,
+        sql: named(text),
+        parameters: params.map((value, i) => ({ name: `p${i + 1}`, value: field(value) }))
+      });
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await rest(`${endpoint("rds-data", target.region)}/Execute`, "rds-data", target.region, { method: "POST", headers: { "content-type": "application/json" }, body }, "ExecuteStatement", fetchImpl);
+          return;
+        } catch (err) {
+          const wait = RESUME_WAITS_MS[attempt];
+          if (wait !== void 0 && resuming(err)) {
+            await sleep(wait);
+            continue;
+          }
+          throw describe2(err);
+        }
+      }
+    },
+    // Nothing is held open between requests.
+    async close() {
+    }
+  };
+}
+
+// dist/resources/aws_rds_cluster/index.js
+var AURORA_CONNECT_TIMEOUT_MS = 2e4;
+register({
+  type: "aws_rds_cluster",
+  keys: ["PORT", "ENGINE", "SECRET_ARN", "DB_NAME", "IAM_USER", "DATA_API"],
+  capabilities: ["table"],
+  /**
+   * Writes the message into `hub_messages` (providers/hubMessages.ts) — the table and the row an
+   * RDS instance gets.
+   *
+   * THREE WAYS IN, AND THE WIRE SAYS WHICH. The compile decides it from the diagram, connection by
+   * connection, because three functions on one cluster can each reach it differently:
+   *
+   *   * `DATA_API` on the wire: the function is outside the VPC and the cluster's Data API is on.
+   *     The statement goes over HTTP (providers/dataApi.ts), to `ARN`, logged in with `SECRET_ARN`.
+   *   * `IAM_USER` on the wire: the function's role is granted `rds-db:connect` on the cluster for
+   *     that user. It connects to ENDPOINT and logs in as the user with an IAM token, creating the
+   *     user first when the database has none (providers/rdsLogin.ts).
+   *   * Neither: it connects to ENDPOINT and logs in with the master user's secret.
+   *
+   * ENDPOINT is the writer endpoint, the host alone; PORT is the cluster's. ENGINE picks the driver
+   * and the SQL: an Aurora PostgreSQL speaks the Postgres protocol.
+   *
+   * AN ENGINE WITH NO DRIVER GOES THROUGH THE DATA API when the wire carries `ARN`, which it does
+   * whenever the cluster has the Data API on. That is Aurora MySQL: no MySQL driver is bundled (one
+   * would add more than a megabyte to every function), and the Data API needs none. From inside a
+   * VPC it needs a NAT gateway or an rds-data interface endpoint, and the failure says so. It logs
+   * in with the secret, as the Data API does, so `IAM_USER` does not apply there.
+   *
+   * Every refusal comes before anything is read or sent.
+   */
+  async send(n, envelope, ctx) {
+    const engine = n.props["ENGINE"];
+    if (!engine) {
+      throw new Error("no engine on the wire: the diagram was compiled before the cluster exported it, compile it again");
+    }
+    const secretArn = n.props["SECRET_ARN"];
+    const database = n.props["DB_NAME"];
+    const region = ctx.region(n);
+    const noDriver = !canConnect(engine) && Boolean(n.props["ARN"]) && dialectOf(engine) !== void 0;
+    if (n.props["DATA_API"] || noDriver) {
+      const dialect = dialectOf(engine);
+      if (!dialect)
+        throw new Error(`the Data API writes here in PostgreSQL or MySQL, and the cluster's engine is "${engine}"`);
+      const resourceArn = n.props["ARN"];
+      if (!resourceArn)
+        throw new Error("no cluster ARN on the wire: the Data API addresses the cluster by it");
+      if (!secretArn) {
+        throw new Error("no secret on the wire: the Data API logs in with a secret, and the cluster has no managed master password");
+      }
+      if (!database)
+        throw new Error("no database name on the wire: the Data API writes into a named database");
+      if (!region)
+        throw new Error("no region for the cluster and none for the workload");
+      await store(connection({ resourceArn, secretArn, database, region }, ctx.fetch), envelope, ctx, dialect);
+      return;
+    }
+    const endpoint2 = n.props["ENDPOINT"];
+    if (!endpoint2)
+      throw new Error("no endpoint on the wire");
+    const iamUser = n.props["IAM_USER"];
+    if (!secretArn && !iamUser) {
+      throw new Error("no secret on the wire: the cluster has no managed master password, and no IAM user is on the wire");
+    }
+    if (!database)
+      throw new Error("no database name on the wire");
+    if (!region)
+      throw new Error("no region for the cluster and none for the workload");
+    assertSupported(engine);
+    const { host, port: fromEndpoint } = parseEndpoint(endpoint2, engine);
+    const portOnWire = n.props["PORT"];
+    const port = portOnWire ? parseEndpoint(`${host}:${portOnWire}`, engine).port : fromEndpoint;
+    const resumes = engine.trim().toLowerCase().startsWith("aurora");
+    await write(engine, { host, port, database }, { secretArn, iamUser }, region, envelope, ctx, resumes ? { connectTimeoutMs: AURORA_CONNECT_TIMEOUT_MS } : void 0);
   }
 });
 

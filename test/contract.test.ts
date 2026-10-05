@@ -87,6 +87,7 @@ test('a captured environment rebuilds exactly the wires it describes', () => {
 			'aws_db_proxy',
 			'aws_dynamodb_table',
 			'aws_lambda_function',
+			'aws_rds_cluster',
 			'aws_s3_bucket',
 			'aws_secretsmanager_secret',
 			'aws_sns_topic',

@@ -13,8 +13,8 @@ proxy as it is to the database behind it.
 
 Legend: **✓** shipped · **?** blocked on a decision
 
-**Every applicable AWS resource is implemented**: 17 send targets and 12 event sources across 21
-modules. What remains is the five below, each waiting on an answer rather than on work.
+**Every applicable AWS resource is implemented**: 18 send targets and 12 event sources across 22
+modules. What remains is the four below, each waiting on an answer rather than on work.
 
 Nothing here has run against a live account yet. The suite proves the logic and the wiring over a
 fake transport; it does not prove a signature AWS will accept.
@@ -117,6 +117,7 @@ answers.
 |---|---|---|
 | `aws_db_instance` | `INSERT` into `hub_messages`, Postgres family | ✓ |
 | `aws_db_proxy` | the same `INSERT`, through the proxy — see below | ✓ |
+| `aws_rds_cluster` | the same `INSERT`, over TCP or through the RDS Data API — see below | ✓ |
 
 **The one destination that is not an HTTPS request, so it has a port of its own.** A database is a
 TCP connection and a wire protocol, and `fetch` cannot stand in for it. `providers/sql.ts` is the
@@ -135,7 +136,12 @@ statements in that family's SQL: they are written in Postgres (`$1` placeholders
 **The driver is `pg`, bundled, with no Lambda layer.** The part of a client that goes wrong is
 authentication (SCRAM-SHA-256), and the databases this reaches are private, so a mistake would
 surface one apply at a time. The bundler inlines `pg` as it does `aws4fetch`, and the function
-still ships one file. It takes the unminified bundle from 55 KiB to 241.
+still ships one file. It takes the unminified bundle from 55 KiB to 241 (265 with IAM login and
+the Data API).
+
+**There is no MySQL driver, on purpose.** `mysql2`, bundled, is 1.3 MiB — five times everything
+else together — and every function would carry it. An Aurora MySQL cluster is written through the
+Data API instead (below), which needs no driver; a MySQL instance over TCP is refused by name.
 
 **The credential is read from the managed secret on every send.** The generated policy grants
 `GetSecretValue` on exactly that secret. It is not cached (the secret rotates), not placed in an
@@ -159,10 +165,52 @@ no database is refused by name.
 `SECRET_ARN` is the secret of the proxy's first `auth` entry. Under Secrets Manager authentication
 the proxy checks a client's user name and password against its secrets, so the secret the proxy
 logs in to the database with is also the one a client logs in to the proxy with, and the generated
-policy grants the workload `GetSecretValue` on it. A proxy with `default_auth_scheme = IAM_AUTH`
-exports no secret and is refused by name: a client there presents an IAM token, which this build
-does not produce. A gap remains: an `auth` entry with `iam_auth = REQUIRED` still exports its
-secret, and the proxy refuses the password at login.
+policy grants the workload `GetSecretValue` on it. An `auth` entry with `iam_auth = REQUIRED`
+refuses the password: the wire then carries `IAM_AUTH=REQUIRED`, and the client reads the secret
+for its user name only and logs in as that user with a token made for the proxy's endpoint; the
+generator grants `rds-db:connect` on the proxy. A proxy with `default_auth_scheme = IAM_AUTH`
+exports no secret, and a client reaches it only as the user a policy on its role names
+(`IAM_USER`); without one it is refused by name.
+
+**An Aurora cluster is reached three ways, and the wire says which.** One cluster can serve a
+function that logs in with the master secret, one that logs in as an IAM user and one outside the
+VPC, so the decision is per wire, made by the compile from how each function is drawn:
+
+- `DATA_API=true`: the function has no network interface and the cluster has its Data API on. It
+  has no network path to the cluster, and the statement goes to the RDS Data API over HTTPS
+  (`providers/dataApi.ts`): `POST /Execute`, signed for `rds-data`, addressed to `ARN` and logged in
+  with `SECRET_ARN`. It answers the same `Connection` the TCP driver does, so the row is the same;
+  `$n` placeholders become `:pn` named parameters.
+- `IAM_USER=<user>`: the function's role is granted `rds-db:connect` for that user. It connects to
+  `ENDPOINT:PORT` and logs in as the user with a token (`providers/rdsIam.ts`), a SigV4 presigned
+  URL for `rds-db` that the test checks against a signature computed from the specification.
+- neither: it connects and logs in with the master user's secret, as an instance wire does.
+
+An engine with no driver — Aurora MySQL — goes through the Data API whenever the wire carries
+`ARN`, which it does while the cluster's Data API is on. From inside a VPC that needs a NAT gateway
+or an `rds-data` interface endpoint, and a request that gets no answer says so.
+
+**An IAM user the database does not have is created.** A diagram can draw the grant
+(`rds-db:connect`) and cannot draw the user it names: a user is created inside the database, with
+SQL. When the token is refused as a password (`28P01` — the user does not exist, or is not a member
+of `rds_iam`) on a database reached directly, the module logs in with the master secret the wire
+also carries, creates the user, grants it `rds_iam`, and logs in again. Only a user that does not
+exist is created: `GRANT rds_iam` ends a user's password login, so an existing user, and the
+master user above all, is left as it is and the refusal says why. When the IAM user may not write
+— no table yet and no right to create one in `public` (PostgreSQL 15 and later), or a table it was
+never granted — the master user creates the table and grants it `INSERT`, once. Through a proxy
+none of this happens: there the user is the proxy's.
+
+**A user that may not create the table still writes into it.** `create table if not exists` is
+checked against the schema before the table is looked for, so it fails for such a user even when
+the table is there; that refusal (`42501`) is passed over and the insert decides.
+
+**A paused cluster is waited for.** An Aurora Serverless v2 cluster with a minimum of 0 ACUs pauses
+when idle, and the first connection resumes it in about fifteen seconds, longer after a day. Over
+TCP an Aurora cluster gets twenty seconds to accept a connection instead of five; through the Data
+API, a `DatabaseResumingException` is retried for up to twenty-five seconds. A function that cannot
+reach the cluster at all now waits the twenty seconds before saying so, and the message names both
+causes.
 
 **One connection per send, with a five-second limit on each phase.** A function in a subnet with
 no route to the database does not fail, it waits, and the wait is billed up to the function's own
@@ -172,13 +220,16 @@ message makes an RDS Proxy refuse the connection (0A000, measured on the first a
 after connecting would pin the session to one database connection.
 
 **Needs a route to the database and to Secrets Manager.** The function has to be in a subnet, and
-a subnet with no NAT reaches Secrets Manager only through an interface endpoint.
+a subnet with no NAT reaches Secrets Manager only through an interface endpoint. The exception is
+the Data API, which a function outside every VPC reaches over the internet.
 
 The instance path has run against a real database: on 2026-10-04 a function connected to a
 Postgres instance reported its hop as delivered (`ok: true`) every minute, in about 100 ms. The
 proxy path got as far as the startup message the same day: the secret was read, the proxy's
 certificate was verified, and the proxy refused `statement_timeout`, which the driver no longer
-sends. Authentication through the proxy and the write have not run yet.
+sends. Authentication through the proxy and the write have not run yet. None of the Aurora paths,
+IAM login or the Data API has run against a live database yet: the token is checked against the
+signature specification and the Data API against its documented request, both offline.
 
 ## Receive — event sources
 
@@ -203,7 +254,6 @@ Not oversights. Each needs an answer before it can be written.
 
 | type | why | the question |
 |---|---|---|
-| `aws_rds_cluster` | the catalog exports no endpoint, database or secret for it | export them as `aws_db_instance` does; its `aurora-postgresql` engine already has a driver |
 | `aws_elasticache_replication_group` | Redis wire protocol over TCP | a driver would have to be shipped, as it was for databases, and none is |
 | `aws_efs_access_point`, `aws_efs_file_system` | POSIX writes through a mount | only works where the filesystem is mounted; a Worker can never do it |
 | `aws_instance` | needs `ec2:DescribeInstances` to find the host | the generated policy does not grant it — change the wire's policy, or drop the type? |

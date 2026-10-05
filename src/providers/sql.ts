@@ -16,6 +16,10 @@
  * Drivers register themselves on import (`providers/postgres.ts`), and a resource module imports
  * the ones it can use. That is what keeps a function that is not wired to a database from carrying
  * a database client: the bundler only includes what a chosen resource imports.
+ *
+ * An Aurora cluster can also be reached over HTTP, through the RDS Data API, from a function that
+ * has no network path to it. That transport is `providers/dataApi.ts`, and it hands back the same
+ * {@link Connection}, so what is written does not depend on how the database was reached.
  */
 
 /** Where a database listens. */
@@ -36,15 +40,35 @@ export interface Connection {
 	/**
 	 * Runs one statement. Values go in `params`, positional, and are never spliced into `text`:
 	 * what is stored is somebody else's message, and a message is not trusted to be inert.
+	 *
+	 * Placeholders are written `$1`, `$2`, … whatever the transport: a transport whose database
+	 * spells them otherwise rewrites them. A failure the database reports carries its SQLSTATE in
+	 * `code` ({@link codeOf}), because some of them are a decision and not an error — see
+	 * `providers/hubMessages.ts`.
 	 */
 	run(text: string, params?: readonly unknown[]): Promise<void>;
 	/** Releases the connection. Safe to call after a failure, and never throws. */
 	close(): Promise<void>;
 }
 
-export interface Driver {
-	connect(target: Target, credentials: Credentials): Promise<Connection>;
+/** How a connection is opened, beyond where and as whom. */
+export interface ConnectOptions {
+	/**
+	 * How long to wait for the database to accept the connection, in milliseconds. Each driver has
+	 * a default; a caller raises it for a database that is known to answer late, and only then.
+	 */
+	readonly connectTimeoutMs?: number;
 }
+
+export interface Driver {
+	connect(target: Target, credentials: Credentials, options?: ConnectOptions): Promise<Connection>;
+}
+
+/** The SQLSTATE a failure carries, or `''` when it carries none. */
+export const codeOf = (err: unknown): string => {
+	const code = (err as { code?: unknown } | null)?.code;
+	return typeof code === 'string' ? code : '';
+};
 
 /**
  * Engine name, as the provider spells it, to the family of wire protocol it speaks.
@@ -80,6 +104,31 @@ export function resetDrivers(): void {
 export const familyOf = (engine: string): string | undefined => FAMILIES[engine.trim().toLowerCase()];
 
 /**
+ * The SQL an engine takes, whatever reaches it: the statements a module writes depend on this,
+ * and not on whether a driver for the engine is in the build. The RDS Data API reaches an Aurora
+ * MySQL without one, and still has to send it MySQL.
+ */
+const DIALECTS: Readonly<Record<string, 'postgres' | 'mysql'>> = {
+	postgres: 'postgres',
+	'aurora-postgresql': 'postgres',
+	mysql: 'mysql',
+	mariadb: 'mysql',
+	'aurora-mysql': 'mysql',
+	aurora: 'mysql',
+};
+
+export type Dialect = 'postgres' | 'mysql';
+
+/** The dialect of an engine, or `undefined` for one nothing here writes. */
+export const dialectOf = (engine: string): Dialect | undefined => DIALECTS[engine.trim().toLowerCase()];
+
+/** Whether this build has a loaded driver for the engine's protocol. */
+export const canConnect = (engine: string): boolean => {
+	const family = familyOf(engine);
+	return family !== undefined && drivers.has(family);
+};
+
+/**
  * Refuses an engine this build cannot talk to, by name.
  *
  * Separate from {@link connect} so a caller can refuse BEFORE doing the work that precedes the
@@ -99,9 +148,14 @@ export function assertSupported(engine: string): string {
 	return family;
 }
 
-export async function connect(engine: string, target: Target, credentials: Credentials): Promise<Connection> {
+export async function connect(
+	engine: string,
+	target: Target,
+	credentials: Credentials,
+	options?: ConnectOptions
+): Promise<Connection> {
 	const family = assertSupported(engine);
-	return drivers.get(family)!.connect(target, credentials);
+	return drivers.get(family)!.connect(target, credentials, options);
 }
 
 /**
