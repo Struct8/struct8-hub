@@ -5476,6 +5476,48 @@ function advance(envelope, self) {
 var seal = (envelope) => JSON.stringify({ [MARKER]: VERSION, ...envelope });
 var isEnvelope = (value) => value !== null && typeof value === "object" && value[MARKER] === VERSION;
 
+// dist/core/faults.js
+var LAYERS = ["body", "Message", "detail"];
+var DEPTH = 12;
+function find(value, depth) {
+  if (depth > DEPTH)
+    return void 0;
+  if (typeof value === "string") {
+    const text2 = value.trim();
+    if (!text2.startsWith("{"))
+      return void 0;
+    try {
+      return find(JSON.parse(text2), depth + 1);
+    } catch {
+      return void 0;
+    }
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return void 0;
+  const fields = value;
+  if (typeof fields["behavior"] === "string")
+    return fields["behavior"];
+  for (const layer of LAYERS) {
+    const found = find(fields[layer], depth + 1);
+    if (found !== void 0)
+      return found;
+  }
+  return void 0;
+}
+function directive(body) {
+  const asked = find(body, 0)?.trim().toLowerCase();
+  if (asked === "fail")
+    return { kind: "fail" };
+  if (asked === "slow")
+    return { kind: "slow" };
+  const times = /^fail-times:(\d+)$/.exec(asked ?? "");
+  if (times)
+    return { kind: "fail-times", times: Number(times[1]) };
+  return null;
+}
+var fails = (asked, attempt) => asked.kind === "fail" || asked.kind === "fail-times" && (attempt ?? 1) <= asked.times;
+var spelled = (asked) => asked.kind === "fail-times" ? `fail-times:${asked.times}` : asked.kind;
+
 // dist/core/registry.js
 var modules = /* @__PURE__ */ new Map();
 function register(mod) {
@@ -5517,6 +5559,7 @@ var Trail = class {
   now;
   #hops = [];
   #failed = /* @__PURE__ */ new Set();
+  #faults = [];
   #dropped = 0;
   constructor(trace, origin, now = () => Date.now()) {
     this.trace = trace;
@@ -5547,6 +5590,22 @@ var Trail = class {
   drop() {
     this.#dropped += 1;
   }
+  /**
+   * Notes an item that failed because its message asked to (core/faults.ts).
+   *
+   * It goes in `failed` like an item whose wire failed, so a queue delivers it again and, after
+   * as many deliveries as its redrive policy allows, moves it to the dead-letter queue — which is
+   * what the request is for.
+   */
+  fault(itemId, behavior, attempt) {
+    this.#faults.push({
+      ...itemId === void 0 ? {} : { item: itemId },
+      behavior,
+      ...attempt === void 0 ? {} : { attempt }
+    });
+    if (itemId !== void 0)
+      this.#failed.add(itemId);
+  }
   #push(neighbor, started, ok, err) {
     this.#hops.push({
       n: this.#hops.length + 1,
@@ -5565,7 +5624,8 @@ var Trail = class {
       origin: this.origin,
       hops: this.#hops,
       failed: [...this.#failed],
-      dropped: this.#dropped
+      dropped: this.#dropped,
+      ...this.#faults.length === 0 ? {} : { faults: [...this.#faults] }
     };
   }
 };
@@ -5629,6 +5689,13 @@ async function handle(arrival, neighbors, ctx, opts = {}) {
   const trail = new Trail(trace, arrival.origin, opts.now);
   const reachable = neighbors.filter((n) => get(n.type)?.send);
   for (const [index, item] of arrival.items.entries()) {
+    const asked = opts.faults ? directive(item.body) : null;
+    if (asked?.kind === "slow")
+      await opts.faults.stall();
+    else if (asked && fails(asked, item.attempt)) {
+      trail.fault(item.id, spelled(asked), item.attempt);
+      continue;
+    }
     const incoming = chains[index] ?? open(item.body, ctx.self, {
       trace,
       ...opts.at === void 0 ? {} : { at: opts.at },
@@ -6077,15 +6144,35 @@ async function emitTrace(report, trace, self, region, fetchImpl = fetch) {
   }
 }
 
+// dist/runtimes/flags.js
+var onish = (value) => {
+  const v = (value ?? "").trim().toLowerCase();
+  return v === "on" || v === "true" || v === "1" || v === "yes";
+};
+
 // dist/runtimes/lambda.js
 var BATCHED = /* @__PURE__ */ new Set(["aws:sqs", "aws:kinesis", "aws:dynamodb"]);
 var HTTP_PROXY = /* @__PURE__ */ new Set(["aws:apigateway", "aws:lambda_url"]);
-var proxyResponse = (report) => ({
-  statusCode: 200,
+var proxyResponse = (report, statusCode = 200) => ({
+  statusCode,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(report)
 });
 var env = (name) => typeof process === "undefined" ? void 0 : process.env[name];
+var faultsEnabled = () => onish(env("HUB_FAULTS"));
+var stall = (context) => async () => {
+  const remaining = context.getRemainingTimeInMillis?.();
+  if (remaining === void 0)
+    return;
+  console.log(JSON.stringify({ hub: "slow: waiting past the timeout, as the message asked", ms: remaining }));
+  await new Promise((resolve) => setTimeout(resolve, remaining + 1e3));
+};
+var RequestedFailure = class extends Error {
+  name = "RequestedFailure";
+  constructor(faults) {
+    super(`the message asked to fail (${faults.map((f) => f.behavior).join(", ")}) and HUB_FAULTS is on`);
+  }
+};
 var accountFrom = (context) => env("ACCOUNT") ?? context.invokedFunctionArn?.split(":")[4] ?? void 0;
 function lambda(opts = {}) {
   let neighbors;
@@ -6112,14 +6199,18 @@ function lambda(opts = {}) {
       ...opts.hops === void 0 ? {} : { hops: opts.hops },
       // The platform's trace id wins over the envelope's, which is what `handle` documents. The
       // invocation segment is already filed under this one.
-      ...trace === null ? {} : { trace: trace.root }
+      ...trace === null ? {} : { trace: trace.root },
+      ...faultsEnabled() ? { faults: { stall: stall(context) } } : {}
     });
     console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
     await emitTrace(report, trace ?? void 0, self, ownRegion, globalThis.fetch);
     if (BATCHED.has(arrival.origin))
       return ack(report);
+    const faults = report.faults ?? [];
     if (HTTP_PROXY.has(arrival.origin))
-      return proxyResponse(report);
+      return proxyResponse(report, faults.length > 0 ? 500 : 200);
+    if (faults.length > 0)
+      throw new RequestedFailure(faults);
     return report;
   };
 }
@@ -8222,12 +8313,18 @@ register({
     if (!Array.isArray(records) || records[0]?.eventSource !== "aws:sqs")
       return null;
     const queue = records[0]?.eventSourceARN?.split(":").pop() ?? "?";
-    const items = records.map((r) => ({
-      // Present because a queue accepts a partial-batch report: without the id, one failed
-      // message forces the whole batch to be redelivered.
-      ...r.messageId === void 0 ? {} : { id: r.messageId },
-      body: r.body ?? ""
-    }));
+    const items = records.map((r) => {
+      const attempt = Number(r.attributes?.ApproximateReceiveCount);
+      return {
+        // Present because a queue accepts a partial-batch report: without the id, one failed
+        // message forces the whole batch to be redelivered.
+        ...r.messageId === void 0 ? {} : { id: r.messageId },
+        body: r.body ?? "",
+        // Which delivery this is. A queue is the only source that counts them, and
+        // `fail-times` is what reads it (core/faults.ts).
+        ...Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}
+      };
+    });
     return { origin: "aws:sqs", describe: `SQS ${queue} (${items.length} record(s))`, items };
   },
   /**

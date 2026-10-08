@@ -47,6 +47,7 @@ export type {
 	Ctx,
 	Discovery,
 	Envelope,
+	Fault,
 	Hop,
 	Ingress,
 	Item,

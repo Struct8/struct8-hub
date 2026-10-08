@@ -10,7 +10,7 @@
 
 import { displayName } from './discovery.js';
 import { spanId } from './envelope.js';
-import type { Hop, Neighbor, Report, TraceContext } from './types.js';
+import type { Fault, Hop, Neighbor, Report, TraceContext } from './types.js';
 
 /**
  * Trims an error to something a report line can hold without losing the useful part.
@@ -29,6 +29,7 @@ const reason = (err: unknown): string => {
 export class Trail {
 	readonly #hops: Hop[] = [];
 	readonly #failed = new Set<string>();
+	readonly #faults: Fault[] = [];
 	#dropped = 0;
 
 	constructor(
@@ -62,6 +63,22 @@ export class Trail {
 		this.#dropped += 1;
 	}
 
+	/**
+	 * Notes an item that failed because its message asked to (core/faults.ts).
+	 *
+	 * It goes in `failed` like an item whose wire failed, so a queue delivers it again and, after
+	 * as many deliveries as its redrive policy allows, moves it to the dead-letter queue — which is
+	 * what the request is for.
+	 */
+	fault(itemId: string | undefined, behavior: string, attempt: number | undefined): void {
+		this.#faults.push({
+			...(itemId === undefined ? {} : { item: itemId }),
+			behavior,
+			...(attempt === undefined ? {} : { attempt }),
+		});
+		if (itemId !== undefined) this.#failed.add(itemId);
+	}
+
 	#push(neighbor: Neighbor, started: number, ok: boolean, err?: string): void {
 		this.#hops.push({
 			n: this.#hops.length + 1,
@@ -82,6 +99,7 @@ export class Trail {
 			hops: this.#hops,
 			failed: [...this.#failed],
 			dropped: this.#dropped,
+			...(this.#faults.length === 0 ? {} : { faults: [...this.#faults] }),
 		};
 	}
 }

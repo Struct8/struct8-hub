@@ -14,6 +14,16 @@ AWS account.
 
 ### Added
 
+- Failures on request, for the lessons about retries and dead-letter queues. With `HUB_FAULTS` on, a
+  Lambda fails a message whose JSON has `behavior` set to `fail`, `fail-times:N` or `slow`. It is off
+  by default and absent from the container runtime. Only the message that asks fails: a queue gets
+  it back in `batchItemFailures` and the rest of the batch is processed, while an asynchronous
+  invocation (SNS, EventBridge, a schedule) fails and a function URL answers 500. `fail-times`
+  reads the queue's `ApproximateReceiveCount`, which `aws_sqs_queue` now passes on as the item's
+  `attempt`; no other source counts deliveries. The field is found through the Hub's envelope, an
+  SNS notification and an EventBridge `detail`. The report lists each failure under `faults`, and
+  the field is absent when nothing failed. `onish` moved to `runtimes/flags.ts`, shared by the two
+  runtimes.
 - A workload can write to a DocumentDB cluster. `aws_docdb_cluster` is the 24th module: the message
   becomes a document of `hub.hub_messages` — the record a database row carries, its identity as
   `_id`, so a redelivery (duplicate key, 11000) is not a second document — written over the MongoDB

@@ -141,6 +141,52 @@ no relatório. Vive num caminho próprio, então o health check `GET` e o fan-ou
 exatamente igual, ligada ou não. Aponte o k6 para `POST /loadtest?ms=...` através do load balancer,
 e o ASG escala pela CPU que cada requisição custa — um custo que você define.
 
+## Falha sob pedido (educacional, desligada por padrão)
+
+Uma fila de mensagens mortas (DLQ) só recebe mensagens quando o consumidor falha, e o Hub não
+falha: ele registra o destino que falhou e segue em frente. Para as lições sobre novas tentativas e
+DLQ, a Lambda pode aceitar que a própria mensagem peça uma falha:
+
+```
+HUB_FAULTS=on
+{"order": 42, "behavior": "fail"}
+```
+
+| `behavior` | O que acontece |
+|---|---|
+| `ok`, ou sem o campo | A mensagem é processada normalmente. |
+| `fail` | A mensagem falha em toda entrega. |
+| `fail-times:N` | A mensagem falha até a fila entregá-la N vezes e depois é processada. |
+| `slow` | A função espera além do timeout, e a invocação falha. |
+
+**Só falha a mensagem que pede.** Num lote de dez mensagens da fila com uma `fail`, só essa volta em
+`batchItemFailures`, e as outras nove são processadas. A mensagem que falha não segue para nenhum
+destino, assim o destino não a recebe de novo a cada tentativa.
+
+Como a falha chega à origem depende da origem:
+
+- **Fila:** a mensagem que falhou volta na resposta de falha parcial. Esgotadas as entregas que a
+  política de redrive permite, o SQS a move para a DLQ.
+- **Invocação assíncrona** (SNS, EventBridge, agenda do Scheduler): a invocação falha, e é isso que
+  aciona as novas tentativas, o destino de falha e a DLQ. Cada uma dessas invocações leva uma
+  mensagem só.
+- **Function URL ou API Gateway:** a resposta é 500, com o relatório no corpo.
+- **`slow`** é a exceção ao "só falha a mensagem que pede". Uma função que estoura o timeout não
+  responde nada, e a fila entrega o lote inteiro de novo, inclusive as mensagens já processadas.
+
+Só a fila conta as entregas. Nas outras origens, toda entrega conta como a primeira, e
+`fail-times` falha sempre, como `fail`.
+
+O campo é procurado nas camadas que a mensagem ganha pelo caminho: o envelope do Hub, a notificação
+do SNS entregue a uma fila e o `detail` de um evento do EventBridge. A mensagem enviada a uma
+produtora continua pedindo a mesma coisa quando chega à consumidora, dois saltos depois. Cada falha
+aparece no relatório, em `faults`, com o id da mensagem e o número da entrega quando a origem os
+informa.
+
+Fica **desligada a menos que `HUB_FAULTS` esteja setado**, e só no runtime de Lambda. Ligada,
+qualquer um com permissão de publicar no que alimenta a função consegue fazê-la falhar. Ligue só
+na função da lição.
+
 ## Rastreamento (X-Ray)
 
 O relatório pode ir para o X-Ray além do log. Cada hop vira um subsegmento — o nome do destino,

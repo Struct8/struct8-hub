@@ -139,6 +139,51 @@ and touches no report. It lives on its own path, so the `GET` health check and t
 fan-out behave exactly the same whether it is on or off. Point k6 at `POST /loadtest?ms=...`
 through the load balancer, and the ASG scales on the CPU each request costs — a cost you set.
 
+## Failures on request (educational, off by default)
+
+A dead-letter queue fills only when a consumer fails, and a Hub does not fail: it records the wire
+that failed and carries on. For the lessons about retries and dead-letter queues, a Lambda can be
+told to let a message ask for a failure:
+
+```
+HUB_FAULTS=on
+{"order": 42, "behavior": "fail"}
+```
+
+| `behavior` | What happens |
+|---|---|
+| `ok`, or no field | The message is processed as always. |
+| `fail` | The message fails at every delivery. |
+| `fail-times:N` | The message fails until the queue has delivered it N times, then is processed. |
+| `slow` | The function waits past its timeout, and the invocation fails. |
+
+**Only the message that asks fails.** In a batch of ten from a queue with one `fail`, that one comes
+back in `batchItemFailures` and the other nine are processed. A message that fails is not forwarded
+to any destination, so a destination does not receive it again at every retry.
+
+How the failure reaches the source depends on the source:
+
+- **A queue** gets the failed message back in the partial-batch answer. After as many deliveries as
+  its redrive policy allows, SQS moves it to the dead-letter queue.
+- **An asynchronous invocation** (SNS, EventBridge, a schedule) fails, which is what its retries, its
+  on-failure destination and its dead-letter queue react to. Each of these invocations carries one
+  message.
+- **A function URL or API Gateway** answers 500, with the report in the body.
+- **`slow`** is the exception to "only the message that asks": a function that times out answers
+  nothing, so the queue delivers the whole batch again, the messages already processed included.
+
+Only a queue counts deliveries. Elsewhere, every delivery counts as the first, so `fail-times`
+fails every time, like `fail`.
+
+The field is found through the layers a message picks up on its way: the Hub's envelope, an SNS
+notification delivered to a queue, and the `detail` of an EventBridge event. A message sent to a
+producer still asks for the same thing when it reaches a consumer two hops later. Every failure is
+in the report, under `faults`, with the message id and the delivery number when the source has
+them.
+
+It is **off unless `HUB_FAULTS` is set**, and only on the Lambda runtime. With it on, anyone allowed
+to publish to what feeds the function can make it fail. Set it only on the function of the lesson.
+
 ## Tracing (X-Ray)
 
 The report can go to X-Ray as well as to the log. Each hop becomes one subsegment — the target's

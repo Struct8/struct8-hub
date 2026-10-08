@@ -52,6 +52,11 @@ export type Discovery = (source: unknown) => Neighbor[];
 export interface Item {
 	readonly id?: string;
 	readonly body: string;
+	/**
+	 * Which delivery of this item this is, counting this one. Only a queue says — SQS counts
+	 * receives — and only failures on request read it (core/faults.ts).
+	 */
+	readonly attempt?: number;
 }
 
 /** What arrived, reduced to one shape regardless of which platform or source produced it. */
@@ -272,6 +277,21 @@ export interface Report {
 	 * dropped item looks exactly like a delivered one from outside.
 	 */
 	readonly dropped: number;
+	/**
+	 * Items that failed because the message asked to (core/faults.ts). Present only when one did,
+	 * which can happen only with failures on request turned on.
+	 */
+	readonly faults?: readonly Fault[];
+}
+
+/** One item that failed because its message asked to. */
+export interface Fault {
+	/** The item's id, where the source has one. */
+	readonly item?: string;
+	/** What the message asked for, as it wrote it: `fail`, `fail-times:2`. */
+	readonly behavior: string;
+	/** Which delivery this was, where the source counts them. */
+	readonly attempt?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,12 +10,15 @@ import { parseTraceHeader, traceHeader } from '../core/envelope.js';
 import { ack, handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
 import * as aws from '../providers/aws.js';
-import type { Ctx, Neighbor, Report } from '../core/types.js';
+import type { Ctx, Fault, Neighbor, Report } from '../core/types.js';
+import { onish } from './flags.js';
 
 /** The fields of the Lambda context object this shim reads. */
 export interface LambdaContext {
 	readonly functionName?: string;
 	readonly invokedFunctionArn?: string;
+	/** Read only for a message that asked for `slow` (core/faults.ts). */
+	readonly getRemainingTimeInMillis?: () => number;
 }
 
 /** Sources that deliver a batch and accept a partial-failure report. */
@@ -47,20 +50,60 @@ const HTTP_PROXY = new Set(['aws:apigateway', 'aws:lambda_url']);
  * make a working Hub with one bad destination indistinguishable from a Hub that was deployed
  * wrong.
  *
+ * 500 for one case only: a message that asked to fail (core/faults.ts). That is the function
+ * failing on purpose, not a wire, and an HTTP caller has to see it the way it would see any
+ * function fail.
+ *
  * ⚠️ `report.failed` cannot carry a status here, and reading as though it could is the trap.
  * `Trail.record` adds to that list only when the item has an `id`, and an `id` exists solely for
  * sources that accept a partial-batch report — a queue or a stream. An HTTP arrival carries no id,
  * so `failed` is empty however many hops failed. A status derived from it answers 200 always,
  * which looks like the feature working and hides the one thing this package exists to show.
  */
-const proxyResponse = (report: Report) => ({
-	statusCode: 200,
+const proxyResponse = (report: Report, statusCode = 200) => ({
+	statusCode,
 	headers: { 'content-type': 'application/json' },
 	body: JSON.stringify(report),
 });
 
 const env = (name: string): string | undefined =>
 	typeof process === 'undefined' ? undefined : (process.env as Record<string, string | undefined>)[name];
+
+/**
+ * Whether a message may ask the function to fail (core/faults.ts). Read per invocation, like
+ * everything else here that a test sets.
+ */
+const faultsEnabled = (): boolean => onish(env('HUB_FAULTS'));
+
+/**
+ * Waits past the invocation's deadline, for a message that asked for `slow`.
+ *
+ * The platform ends the invocation at its timeout, so on Lambda this never returns. A function
+ * that timed out answers nothing, and a source with no answer delivers again everything it sent,
+ * the messages already processed included: the difference between one item failing and an
+ * invocation failing, which is what `slow` is there to show.
+ *
+ * One second past the deadline, so it is the timeout that ends the invocation and not this. With
+ * no deadline to read — an invocation outside the platform — there is nothing to outlast.
+ */
+const stall = (context: LambdaContext) => async (): Promise<void> => {
+	const remaining = context.getRemainingTimeInMillis?.();
+	if (remaining === undefined) return;
+	console.log(JSON.stringify({ hub: 'slow: waiting past the timeout, as the message asked', ms: remaining }));
+	await new Promise((resolve) => setTimeout(resolve, remaining + 1_000));
+};
+
+/**
+ * What an invocation fails with when a message asked it to. The name is what the function's log,
+ * the on-failure destination and the dead-letter queue's error attributes show.
+ */
+class RequestedFailure extends Error {
+	override readonly name = 'RequestedFailure';
+
+	constructor(faults: readonly Fault[]) {
+		super(`the message asked to fail (${faults.map((f) => f.behavior).join(', ')}) and HUB_FAULTS is on`);
+	}
+}
 
 /**
  * The account id, which is harder to obtain than it looks.
@@ -128,6 +171,7 @@ export function lambda(opts: LambdaOptions = {}) {
 			// The platform's trace id wins over the envelope's, which is what `handle` documents. The
 			// invocation segment is already filed under this one.
 			...(trace === null ? {} : { trace: trace.root }),
+			...(faultsEnabled() ? { faults: { stall: stall(context) } } : {}),
 		});
 
 		console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
@@ -139,11 +183,20 @@ export function lambda(opts: LambdaOptions = {}) {
 
 		// The batch contract is not optional. An absent list makes the source treat every message
 		// as failed and redeliver the lot; on a stream the checkpoint rewinds to the lowest
-		// sequence number reported and everything after it comes back too.
+		// sequence number reported and everything after it comes back too. A message that asked to
+		// fail is already in the list, and only that one.
 		if (BATCHED.has(arrival.origin)) return ack(report);
 
+		// A source with no partial-batch report learns of a failure only from the invocation, so a
+		// message that asked to fail fails it. On an asynchronous invocation — SNS, EventBridge, a
+		// schedule — that is what the retries, the on-failure destination and the dead-letter queue
+		// react to.
+		const faults = report.faults ?? [];
+
 		// A proxy integration wants an HTTP response, not the report on its own.
-		if (HTTP_PROXY.has(arrival.origin)) return proxyResponse(report);
+		if (HTTP_PROXY.has(arrival.origin)) return proxyResponse(report, faults.length > 0 ? 500 : 200);
+
+		if (faults.length > 0) throw new RequestedFailure(faults);
 
 		// Direct invocation, and anything else that reads the answer as a value: the report
 		// unwrapped, which is what a caller doing `Payload` on an Invoke expects to parse.

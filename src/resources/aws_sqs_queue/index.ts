@@ -8,6 +8,7 @@ interface SqsRecord {
 	readonly eventSourceARN?: string;
 	readonly messageId?: string;
 	readonly body?: string;
+	readonly attributes?: { readonly ApproximateReceiveCount?: string };
 }
 
 interface SqsMessage {
@@ -92,12 +93,18 @@ register({
 		if (!Array.isArray(records) || records[0]?.eventSource !== 'aws:sqs') return null;
 
 		const queue = records[0]?.eventSourceARN?.split(':').pop() ?? '?';
-		const items: Item[] = records.map((r) => ({
-			// Present because a queue accepts a partial-batch report: without the id, one failed
-			// message forces the whole batch to be redelivered.
-			...(r.messageId === undefined ? {} : { id: r.messageId }),
-			body: r.body ?? '',
-		}));
+		const items: Item[] = records.map((r) => {
+			const attempt = Number(r.attributes?.ApproximateReceiveCount);
+			return {
+				// Present because a queue accepts a partial-batch report: without the id, one failed
+				// message forces the whole batch to be redelivered.
+				...(r.messageId === undefined ? {} : { id: r.messageId }),
+				body: r.body ?? '',
+				// Which delivery this is. A queue is the only source that counts them, and
+				// `fail-times` is what reads it (core/faults.ts).
+				...(Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}),
+			};
+		});
 
 		return { origin: 'aws:sqs', describe: `SQS ${queue} (${items.length} record(s))`, items };
 	},

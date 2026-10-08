@@ -32,6 +32,7 @@ import * as registry from '../core/registry.js';
 import { credentials, emitTrace, setTraceHeader } from '../providers/aws.js';
 import type { AwsCredentials } from '../providers/aws.js';
 import type { Ctx, Neighbor, Report, TraceContext } from '../core/types.js';
+import { onish } from './flags.js';
 
 /** The link-local address ECS answers the credential request on. Fixed by AWS, not configurable. */
 const CREDENTIAL_HOST = 'http://169.254.170.2';
@@ -75,12 +76,6 @@ const LOADTEST_MAX_MS = 10_000;
 
 /** Default burn when `?ms=` is absent or unparseable. */
 const LOADTEST_DEFAULT_MS = 100;
-
-/** An explicit on-ish value. Anything else, absence included, is off. */
-const onish = (value: string | undefined): boolean => {
-	const v = (value ?? '').trim().toLowerCase();
-	return v === 'on' || v === 'true' || v === '1' || v === 'yes';
-};
 
 /** Reads whether the load-test endpoint is enabled. Anything but an explicit on-ish value is off. */
 const loadtestEnabled = (env: Env): boolean => onish(env['HUB_LOADTEST']);

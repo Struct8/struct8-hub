@@ -7,6 +7,7 @@
  */
 
 import { advance, open, read, seal, traceId } from './envelope.js';
+import { directive, fails, spelled } from './faults.js';
 import * as registry from './registry.js';
 import { Trail } from './report.js';
 import type { Arrival, Ctx, Envelope, Neighbor, Report } from './types.js';
@@ -18,6 +19,14 @@ export interface HandleOptions {
 	readonly at?: string;
 	/** Forward budget for messages entering the chain here. */
 	readonly hops?: number;
+	/**
+	 * Failures on request (core/faults.ts). Absent is off, and off is the default: a runtime passes
+	 * this only when its environment asks for it.
+	 */
+	readonly faults?: {
+		/** Waits out the invocation, for `slow`. On a platform with a deadline it never returns. */
+		readonly stall: () => Promise<void>;
+	};
 }
 
 /**
@@ -62,6 +71,15 @@ export async function handle(
 	const reachable = neighbors.filter((n) => registry.get(n.type)?.send);
 
 	for (const [index, item] of arrival.items.entries()) {
+		// Before the fan-out, so a message that asked to fail is not delivered anywhere first: on a
+		// queue it comes back, and a downstream that already had it would get it once per delivery.
+		const asked = opts.faults ? directive(item.body) : null;
+		if (asked?.kind === 'slow') await opts.faults!.stall();
+		else if (asked && fails(asked, item.attempt)) {
+			trail.fault(item.id, spelled(asked), item.attempt);
+			continue;
+		}
+
 		const incoming: Envelope =
 			chains[index] ??
 			open(item.body, ctx.self, {
