@@ -187,7 +187,7 @@ Fica **desligada a menos que `HUB_FAULTS` esteja setado**, e só no runtime de L
 qualquer um com permissão de publicar no que alimenta a função consegue fazê-la falhar. Ligue só
 na função da lição.
 
-## Rastreamento (X-Ray)
+## Rastreamento (X-Ray e Cloud Trace)
 
 O relatório pode ir para o X-Ray além do log. Cada hop vira um subsegmento — o nome do destino,
 quanto tempo levou e o motivo quando falhou — e o rastro segue para a carga seguinte, de modo que
@@ -224,6 +224,31 @@ Duas coisas levam o rastro adiante, e as duas são necessárias:
 O segundo é o que nenhum cabeçalho resolve: quem envia e quem consome nunca conversam, então o
 rastro tem que viajar dentro da mensagem. O event source mapping lê esse atributo e abre a invocação
 do consumidor no mesmo rastro, e é isso que junta duas funções em uma.
+
+### No Google Cloud, e entre nuvens
+
+Uma Cloud Function envia os spans ao Cloud Trace quando o `HUB_TRACE` está ligado. No diagrama, isso
+é a opção **Send traces to Cloud Trace** da função, que também concede à conta de serviço da função o
+papel `roles/telemetry.tracesWriter` e habilita a Telemetry API. Os spans sobem em OpenTelemetry
+(OTLP) pelo `telemetry.googleapis.com`: um span para a execução e um para cada hop, com o rótulo da
+conexão em `struct8.wire`.
+
+Uma requisição que atravessa nuvens continua sendo um rastro só. O id do rastro são os mesmos 128
+bits no X-Ray e no Cloud Trace, escritos `1-5759e988-bd862e3fe1be46a994272793` num e
+`5759e988bd862e3fe1be46a994272793` no outro, e o log da função mostra a segunda forma em `traceId`.
+Cada hop em direção ao Google leva o `traceparent` do W3C:
+
+| hop | o que leva |
+|---|---|
+| função ou serviço do Cloud Run | o cabeçalho `traceparent` |
+| tópico do Pub/Sub, para o que vier consumir depois | o atributo de mensagem `googclient_traceparent`, o mesmo que as bibliotecas cliente do Google escrevem |
+
+Uma Lambda rastreada no X-Ray que publica num tópico, e a função para a qual esse tópico entrega,
+aparecem com o mesmo id nos dois consoles, com o span da função pendurado no da Lambda. O rastro fica
+em dois backends, e cada console mostra o seu lado.
+
+**Permissão e API:** sem o papel, o log traz `trace not sent: PERMISSION_DENIED`; sem a API,
+`SERVICE_DISABLED`. Como na AWS, o fan-out acontece do mesmo jeito.
 
 ## Como funciona
 

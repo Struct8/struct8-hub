@@ -361,6 +361,11 @@ server. On AWS, with `CROSS_CLOUD_PARAMETER` set, they come from workload identi
 `GetCallerIdentity` exchanged at Google STS, and the service account's tokens from IAM Credentials
 ([contract §6.2](../CONTRACT.md)). Anywhere else, through `credentials()`.
 
+The trace goes along on the two hops that start another workload: `traceparent` on the request to
+a function or a Cloud Run service, `googclient_traceparent` on a Pub/Sub message ([contract
+§6.3](../CONTRACT.md)). A bucket, a secret and a Firestore document carry none: nothing that reads
+them later continues a trace.
+
 | type | call | role the connection needs | |
 |---|---|---|---|
 | `google_pubsub_topic` | `topics.publish` | Pub/Sub Publisher, the label's default | ✓ |

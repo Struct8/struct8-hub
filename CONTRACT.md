@@ -1,9 +1,10 @@
 # Wiring contract
 
-**Version 1.2** · applies to AWS and Google Cloud · English only (this document changes with every contract revision)
+**Version 1.3** · applies to AWS and Google Cloud · English only (this document changes with every contract revision)
 
-Version 1.2 adds a workload on AWS that reaches Google Cloud (§6.2). Version 1.1 added Google Cloud
-(§6.1, §7). Neither changes anything an AWS consumer already reads.
+Version 1.3 adds traces that cross workloads and clouds (§6.3). Version 1.2 added a workload on AWS
+that reaches Google Cloud (§6.2), and version 1.1 added Google Cloud (§6.1, §7). None of them changes
+anything an AWS consumer already reads.
 
 This is the agreement between the generator that emits infrastructure and the workload that runs
 inside it. The generator turns each wire in the diagram into one or more environment variables;
@@ -183,6 +184,44 @@ of its R2 keys; what the parameter holds tells the two apart.
 
 A Cloud Run service or a function reached this way has no `URL` on the wire: the address is a
 Terraform reference of the Google state, which the AWS state cannot read.
+
+### 6.3 Traces across workloads
+
+Each workload records its traces in the backend of the cloud it runs in: X-Ray on AWS, Cloud Trace
+on Google Cloud. One request is still one trace, because the trace id is the same 128 bits in both,
+spelled two ways. X-Ray writes `1-5759e988-bd862e3fe1be46a994272793`; the W3C Trace Context, which
+Cloud Trace and every OpenTelemetry tool read, writes `5759e988bd862e3fe1be46a994272793`. Converting
+is removing or putting back the version and the two hyphens, which is the mapping X-Ray documents.
+
+| variable | value |
+|---|---|
+| `HUB_TRACE` | `on` on a Google Cloud function whose `cloud_trace_` is on in the diagram. The generator also grants the function's service account `roles/telemetry.tracesWriter` on the project and enables `telemetry.googleapis.com` |
+
+On Lambda there is no variable: the platform's `_X_AMZN_TRACE_ID` says whether the invocation is
+sampled, and the diagram turns that on with the function's tracing setting. In a container
+`HUB_TRACE` is set by hand, as before.
+
+A workload that records a trace hands it to the next one on every hop:
+
+| hop | carries |
+|---|---|
+| an HTTP request to a Google function or Cloud Run service | the `traceparent` header |
+| a message published to Pub/Sub | the message attribute `googclient_traceparent`, the name Google's client libraries use |
+| a message sent to SQS | the `AWSTraceHeader` system attribute |
+| a signed request to any AWS service | the `X-Amzn-Trace-Id` header |
+
+The parent span id in either header is the span of the workload that sent it, so the receiving
+workload's span hangs from it. A workload that records nothing puts none of these on the wire.
+
+The Hub also writes the trace id, in X-Ray's spelling, into the `trace` field of the message body it
+forwards (its envelope, which is this implementation's and not part of the contract). On Google, a
+run continues the trace of the Pub/Sub attribute first, then the `traceparent` header, then that
+field, and starts a trace only when none is present.
+
+The spans go to Cloud Trace as OTLP, through the Telemetry API (`https://telemetry.googleapis.com/v1/traces`,
+`http/json`), with `gcp.project_id` as a resource attribute. Each hop is a span with the wire's
+label in `struct8.wire`, the target type in `struct8.resource_type` and its place in the fan-out in
+`struct8.hop`: the same facts the X-Ray subsegments carry as annotations.
 
 ## 7. What the generator emits, and what it does not
 

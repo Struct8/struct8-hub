@@ -16,6 +16,6 @@ register({
 		if (!url) {
 			throw new Error('no service URL on the wire: the service is in another state, or the compile did not export it');
 		}
-		await google.invoke(url, seal(envelope), `POST ${n.props['NAME'] ?? url}`, ctx.fetch);
+		await google.invoke(url, seal(envelope), `POST ${n.props['NAME'] ?? url}`, ctx.fetch, ctx.trace);
 	},
 });

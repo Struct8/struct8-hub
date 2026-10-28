@@ -70,6 +70,11 @@ export interface Arrival {
 	 * record silently discards up to `batchSize - 1` of them.
 	 */
 	readonly items: readonly Item[];
+	/**
+	 * The trace the source carried with the message, when it carried one: the `traceparent` a
+	 * Pub/Sub message holds as an attribute. A runtime that opens its own span continues it.
+	 */
+	readonly trace?: TraceContext;
 }
 
 /**
@@ -141,6 +146,15 @@ export interface TraceContext {
 	 * displayed. The runtime is the only place that knows which of the two it is.
 	 */
 	readonly opens?: boolean;
+	/**
+	 * The span of the workload that called this one, when the call carried it: the parent of the
+	 * span this run opens.
+	 *
+	 * Read only where the run opens its own span (`opens`). Without it the span still lands in the
+	 * right trace, as a second root beside the caller's, and the console draws no line between the
+	 * two.
+	 */
+	readonly upstream?: string;
 	/**
 	 * Whether this trace is being recorded.
 	 *

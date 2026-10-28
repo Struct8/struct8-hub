@@ -9,7 +9,7 @@
  */
 
 import { displayName } from './discovery.js';
-import { spanId } from './envelope.js';
+import { spanId, w3cTraceId } from './envelope.js';
 import type { Fault, Hop, Neighbor, Report, TraceContext } from './types.js';
 
 /**
@@ -183,6 +183,8 @@ export function segments(report: Report, trace: TraceContext, self: string): str
 			id: trace.parent ?? spanId(),
 			name: self,
 			trace_id: trace.root,
+			// The caller's span, so the console draws the line from it to this one.
+			...(trace.upstream ? { parent_id: trace.upstream } : {}),
 			start_time: seconds(Math.min(...starts)),
 			end_time: seconds(Math.max(...ends)),
 			annotations: { origin: report.origin, dropped: report.dropped },
@@ -190,4 +192,99 @@ export function segments(report: Report, trace: TraceContext, self: string): str
 			subsegments: report.hops.map((hop) => subsegment(hop, trace)),
 		}),
 	];
+}
+
+// ---------------------------------------------------------------------------
+// The same trail, in OpenTelemetry's words
+// ---------------------------------------------------------------------------
+
+/** One OTLP key-value, in the JSON encoding of the protocol. */
+type Attribute = { key: string; value: { stringValue: string } | { intValue: string } | { boolValue: boolean } };
+
+const str = (key: string, value: string): Attribute => ({ key, value: { stringValue: value } });
+/** OTLP's JSON encoding writes a 64-bit integer as a decimal string. */
+const int = (key: string, value: number): Attribute => ({ key, value: { intValue: String(Math.trunc(value)) } });
+
+/** Epoch milliseconds as OTLP states time: nanoseconds, a decimal string. */
+const nanos = (ms: number): string => `${Math.round(ms)}000000`;
+
+/** `SpanKind` in the OTLP enum. */
+const KIND = { server: 2, client: 3, consumer: 5 } as const;
+
+/** A source that delivers a message the run consumes, rather than a request it answers. */
+const CONSUMED = /^(gcp:pubsub|aws:sqs|aws:sns|aws:kinesis|aws:dynamodb)$/;
+
+/** Where the spans come from, for the `resource` of the request. */
+export interface SpanResource {
+	/** `service.name`: the workload's logical name. */
+	readonly service: string;
+	/** Other resource attributes: `gcp.project_id`, `cloud.region`. */
+	readonly attributes: Readonly<Record<string, string>>;
+}
+
+/**
+ * Turns a finished report into an OTLP `ExportTraceServiceRequest`, in the protocol's JSON
+ * encoding, or `null` when there is nothing to record.
+ *
+ * One shape only, the one `segments` calls "opening": nobody else wrote a span for this run, so
+ * the run's own span goes up with the hops as its children. Its id is `trace.parent`, the id the
+ * runtime already handed downstream, and its parent is `trace.upstream`, the caller's span.
+ *
+ * The hop attributes carry what the X-Ray annotations carry, under a `struct8.` prefix: the
+ * names OpenTelemetry defines say nothing about a wire in a diagram.
+ *
+ * Status: `ERROR` with the reason on a failed hop, and `UNSET` everywhere else, which is what the
+ * specification asks of instrumentation for an operation that did not fail.
+ *
+ * Pure: it builds an object. Sending it is a provider's job — see `emitTrace` in providers/google.ts.
+ */
+export function spans(report: Report, trace: TraceContext, resource: SpanResource): Record<string, unknown> | null {
+	if (!trace.sampled || report.hops.length === 0) return null;
+
+	const traceId = w3cTraceId(trace.root);
+	const runId = trace.parent ?? spanId();
+	const starts = report.hops.map((hop) => hop.at);
+	const ends = report.hops.map((hop) => hop.at + hop.ms);
+
+	const run = {
+		traceId,
+		spanId: runId,
+		...(trace.upstream ? { parentSpanId: trace.upstream } : {}),
+		name: resource.service,
+		kind: CONSUMED.test(report.origin) ? KIND.consumer : KIND.server,
+		startTimeUnixNano: nanos(Math.min(...starts)),
+		endTimeUnixNano: nanos(Math.max(...ends)),
+		attributes: [str('struct8.origin', report.origin), int('struct8.dropped', report.dropped)],
+		status: report.hops.some((hop) => !hop.ok)
+			? { code: 2, message: `${report.hops.filter((hop) => !hop.ok).length} of ${report.hops.length} hops failed` }
+			: { code: 0 },
+	};
+
+	const hops = report.hops.map((hop) => ({
+		traceId,
+		spanId: spanId(),
+		parentSpanId: runId,
+		name: hop.to,
+		kind: KIND.client,
+		startTimeUnixNano: nanos(hop.at),
+		endTimeUnixNano: nanos(hop.at + hop.ms),
+		// The wire, so a failed span can be found in the drawing: `label` is the text on the arrow
+		// and `n` its position in the fan-out, as in the report.
+		attributes: [str('struct8.wire', hop.label), str('struct8.resource_type', hop.type), int('struct8.hop', hop.n)],
+		status: hop.ok ? { code: 0 } : { code: 2, message: hop.err ?? 'delivery failed' },
+	}));
+
+	return {
+		resourceSpans: [
+			{
+				resource: {
+					attributes: [
+						str('service.name', resource.service),
+						...Object.entries(resource.attributes).map(([key, value]) => str(key, value)),
+					],
+				},
+				scopeSpans: [{ scope: { name: '@struct8/hub' }, spans: [run, ...hops] }],
+			},
+		],
+	};
 }

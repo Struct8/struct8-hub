@@ -16,6 +16,6 @@ register({
 		if (!url) {
 			throw new Error('no function URL on the wire: the function is in another state, or the compile did not export it');
 		}
-		await google.invoke(url, seal(envelope), `invoke ${n.props['NAME'] ?? url}`, ctx.fetch);
+		await google.invoke(url, seal(envelope), `invoke ${n.props['NAME'] ?? url}`, ctx.fetch, ctx.trace);
 	},
 });

@@ -85,6 +85,61 @@ export function parseTraceHeader(raw: string | undefined | null): TraceContext |
 export const traceHeader = (trace: TraceContext): string =>
 	`Root=${trace.root}${trace.parent ? `;Parent=${trace.parent}` : ''};Sampled=${trace.sampled ? '1' : '0'}`;
 
+// ---------------------------------------------------------------------------
+// The same trace in W3C's words
+// ---------------------------------------------------------------------------
+
+/**
+ * The W3C trace id of an X-Ray root: the same 128 bits without the version and the hyphens.
+ *
+ * One trace, two spellings. X-Ray documents the mapping both ways ("W3C trace ID
+ * `4efaaf4d1e8720b39541901950019ee5` should be formatted as `1-4efaaf4d-1e8720b39541901950019ee5`
+ * when sending to X-Ray", xray-api-sendingdata.html), so a request that starts on AWS and ends on
+ * Google is searched for by the same 32 characters in both consoles.
+ */
+export const w3cTraceId = (root: string): string => root.slice(2).replace('-', '');
+
+/**
+ * The X-Ray root of a W3C trace id.
+ *
+ * The first 8 hex digits stop being a timestamp when the trace began outside X-Ray, and X-Ray
+ * accepts that: the timestamp "isn't required when sending W3C trace IDs in X-Ray format" (same
+ * page).
+ */
+export const xrayRoot = (w3c: string): string => `1-${w3c.slice(0, 8)}-${w3c.slice(8)}`;
+
+const TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/;
+
+/**
+ * Reads a W3C `traceparent`: `00-<32 hex trace>-<16 hex parent>-<2 hex flags>`.
+ *
+ * What the spec says to discard is discarded rather than repaired: version `ff`, an all-zero trace
+ * or parent id, trailing data on version `00`, anything malformed. As with the X-Ray header, no
+ * trace is never an error. A later version is read by its first four fields, which is what the
+ * spec asks of a parser meeting a version it does not know.
+ */
+export function parseTraceparent(raw: string | undefined | null): TraceContext | null {
+	if (!raw) return null;
+	const match = TRACEPARENT.exec(raw.trim().toLowerCase());
+	if (!match) return null;
+	const [, version, trace, parent, flags, rest] = match;
+	if (version === 'ff' || (version === '00' && rest !== undefined)) return null;
+	if (/^0+$/.test(trace!) || /^0+$/.test(parent!)) return null;
+	return {
+		root: xrayRoot(trace!),
+		parent: parent!,
+		// Bit 0 of the flags is `sampled`; the other bits are reserved and say nothing to us.
+		sampled: (parseInt(flags!, 16) & 1) === 1,
+	};
+}
+
+/**
+ * Writes the `traceparent` the next workload reads, or `null` when there is no span to name as
+ * its parent: the field is not optional in the spec.
+ */
+export const traceparent = (trace: TraceContext): string | null =>
+	trace.parent ? `00-${w3cTraceId(trace.root)}-${trace.parent}-${trace.sampled ? '01' : '00'}` : null;
+
 /** Starts a chain. `trace` is injectable so that reports are deterministic under test. */
 export function open(body: string, self: string, opts: { trace?: string; at?: string; hops?: number } = {}): Envelope {
 	return {

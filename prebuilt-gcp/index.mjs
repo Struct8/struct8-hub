@@ -1160,20 +1160,20 @@ var require_utils = __commonJS({
       }
       return Object.defineProperties(Object.create(Object.getPrototypeOf(config2)), Object.getOwnPropertyDescriptors(config2));
     }
-    var escapeIdentifier2 = function(str) {
-      return '"' + str.replace(/"/g, '""') + '"';
+    var escapeIdentifier2 = function(str2) {
+      return '"' + str2.replace(/"/g, '""') + '"';
     };
-    var escapeLiteral2 = function(str) {
+    var escapeLiteral2 = function(str2) {
       let hasBackslash = false;
       let escaped = "'";
-      if (str == null) {
+      if (str2 == null) {
         return "''";
       }
-      if (typeof str !== "string") {
+      if (typeof str2 !== "string") {
         return "''";
       }
-      for (let i = 0; i < str.length; i++) {
-        const c = str[i];
+      for (let i = 0; i < str2.length; i++) {
+        const c = str2[i];
         if (c === "'") {
           escaped += c + c;
         } else if (c === "\\") {
@@ -1588,22 +1588,22 @@ var require_type_overrides = __commonJS({
 var require_pg_connection_string = __commonJS({
   "node_modules/pg-connection-string/index.js"(exports, module) {
     "use strict";
-    function parse(str, options = {}) {
-      if (str.charAt(0) === "/") {
-        const config3 = str.split(" ");
+    function parse(str2, options = {}) {
+      if (str2.charAt(0) === "/") {
+        const config3 = str2.split(" ");
         return { host: config3[0], database: config3[1] };
       }
       const config2 = /* @__PURE__ */ Object.create(null);
       let result;
       let dummyHost = false;
-      if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) {
-        str = encodeURI(str).replace(/%25(\d\d)/g, "%$1");
+      if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str2)) {
+        str2 = encodeURI(str2).replace(/%25(\d\d)/g, "%$1");
       }
       try {
         try {
-          result = new URL(str, "postgres://base");
+          result = new URL(str2, "postgres://base");
         } catch (e) {
-          result = new URL(str.replace("@/", "@___DUMMY___/"), "postgres://base");
+          result = new URL(str2.replace("@/", "@___DUMMY___/"), "postgres://base");
           dummyHost = true;
         }
       } catch (err) {
@@ -1749,8 +1749,8 @@ var require_pg_connection_string = __commonJS({
       }, /* @__PURE__ */ Object.create(null));
       return poolConfig;
     }
-    function parseIntoClientConfig(str) {
-      return toClientConfig(parse(str));
+    function parseIntoClientConfig(str2) {
+      return toClientConfig(parse(str2));
     }
     function deprecatedSslModeWarning(sslmode) {
       if (!deprecatedSslModeWarning.warned && typeof process !== "undefined" && process.emitWarning) {
@@ -4176,11 +4176,11 @@ var require_client = __commonJS({
       // escapeIdentifier and escapeLiteral moved to utility functions & exported
       // on PG
       // re-exported here for backwards compatibility
-      escapeIdentifier(str) {
-        return utils.escapeIdentifier(str);
+      escapeIdentifier(str2) {
+        return utils.escapeIdentifier(str2);
       }
-      escapeLiteral(str) {
-        return utils.escapeLiteral(str);
+      escapeLiteral(str2) {
+        return utils.escapeLiteral(str2);
       }
       _pulseQueryQueue() {
         if (this.pipeline) {
@@ -5407,7 +5407,31 @@ var VERSION = 1;
 var DEFAULT_HOPS = 3;
 var hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
 var traceId = (at = /* @__PURE__ */ new Date()) => `1-${Math.floor(at.getTime() / 1e3).toString(16).padStart(8, "0")}-${hex(12)}`;
+var isTraceId = (value) => /^1-[0-9a-f]{8}-[0-9a-f]{24}$/.test(value);
+var spanId = () => hex(8);
 var traceHeader = (trace) => `Root=${trace.root}${trace.parent ? `;Parent=${trace.parent}` : ""};Sampled=${trace.sampled ? "1" : "0"}`;
+var w3cTraceId = (root) => root.slice(2).replace("-", "");
+var xrayRoot = (w3c) => `1-${w3c.slice(0, 8)}-${w3c.slice(8)}`;
+var TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/;
+function parseTraceparent(raw) {
+  if (!raw)
+    return null;
+  const match = TRACEPARENT.exec(raw.trim().toLowerCase());
+  if (!match)
+    return null;
+  const [, version, trace, parent, flags, rest2] = match;
+  if (version === "ff" || version === "00" && rest2 !== void 0)
+    return null;
+  if (/^0+$/.test(trace) || /^0+$/.test(parent))
+    return null;
+  return {
+    root: xrayRoot(trace),
+    parent,
+    // Bit 0 of the flags is `sampled`; the other bits are reserved and say nothing to us.
+    sampled: (parseInt(flags, 16) & 1) === 1
+  };
+}
+var traceparent = (trace) => trace.parent ? `00-${w3cTraceId(trace.root)}-${trace.parent}-${trace.sampled ? "01" : "00"}` : null;
 function open(body, self, opts = {}) {
   return {
     trace: opts.trace ?? traceId(),
@@ -5606,6 +5630,56 @@ var Trail = class {
     };
   }
 };
+var str = (key, value) => ({ key, value: { stringValue: value } });
+var int = (key, value) => ({ key, value: { intValue: String(Math.trunc(value)) } });
+var nanos = (ms) => `${Math.round(ms)}000000`;
+var KIND = { server: 2, client: 3, consumer: 5 };
+var CONSUMED = /^(gcp:pubsub|aws:sqs|aws:sns|aws:kinesis|aws:dynamodb)$/;
+function spans(report, trace, resource) {
+  if (!trace.sampled || report.hops.length === 0)
+    return null;
+  const traceId2 = w3cTraceId(trace.root);
+  const runId = trace.parent ?? spanId();
+  const starts = report.hops.map((hop) => hop.at);
+  const ends = report.hops.map((hop) => hop.at + hop.ms);
+  const run = {
+    traceId: traceId2,
+    spanId: runId,
+    ...trace.upstream ? { parentSpanId: trace.upstream } : {},
+    name: resource.service,
+    kind: CONSUMED.test(report.origin) ? KIND.consumer : KIND.server,
+    startTimeUnixNano: nanos(Math.min(...starts)),
+    endTimeUnixNano: nanos(Math.max(...ends)),
+    attributes: [str("struct8.origin", report.origin), int("struct8.dropped", report.dropped)],
+    status: report.hops.some((hop) => !hop.ok) ? { code: 2, message: `${report.hops.filter((hop) => !hop.ok).length} of ${report.hops.length} hops failed` } : { code: 0 }
+  };
+  const hops = report.hops.map((hop) => ({
+    traceId: traceId2,
+    spanId: spanId(),
+    parentSpanId: runId,
+    name: hop.to,
+    kind: KIND.client,
+    startTimeUnixNano: nanos(hop.at),
+    endTimeUnixNano: nanos(hop.at + hop.ms),
+    // The wire, so a failed span can be found in the drawing: `label` is the text on the arrow
+    // and `n` its position in the fan-out, as in the report.
+    attributes: [str("struct8.wire", hop.label), str("struct8.resource_type", hop.type), int("struct8.hop", hop.n)],
+    status: hop.ok ? { code: 0 } : { code: 2, message: hop.err ?? "delivery failed" }
+  }));
+  return {
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [
+            str("service.name", resource.service),
+            ...Object.entries(resource.attributes).map(([key, value]) => str(key, value))
+          ]
+        },
+        scopeSpans: [{ scope: { name: "@struct8/hub" }, spans: [run, ...hops] }]
+      }
+    ]
+  };
+}
 
 // dist/core/hub.js
 async function normalize(raw) {
@@ -5753,9 +5827,9 @@ var AwsV4Signer = class {
     if (this.sessionToken && !this.appendSessionToken) {
       params.set("X-Amz-Security-Token", this.sessionToken);
     }
-    this.signableHeaders = ["host", ...this.headers.keys()].filter((header) => allHeaders || !UNSIGNABLE_HEADERS.has(header)).sort();
+    this.signableHeaders = ["host", ...this.headers.keys()].filter((header2) => allHeaders || !UNSIGNABLE_HEADERS.has(header2)).sort();
     this.signedHeaders = this.signableHeaders.join(";");
-    this.canonicalHeaders = this.signableHeaders.map((header) => header + ":" + (header === "host" ? this.url.host : (this.headers.get(header) || "").replace(/\s+/g, " "))).join("\n");
+    this.canonicalHeaders = this.signableHeaders.map((header2) => header2 + ":" + (header2 === "host" ? this.url.host : (this.headers.get(header2) || "").replace(/\s+/g, " "))).join("\n");
     this.credentialString = [this.datetime.slice(0, 8), this.region, this.service, "aws4_request"].join("/");
     if (this.signQuery) {
       if (this.service === "s3" && !params.has("X-Amz-Expires")) {
@@ -5961,6 +6035,9 @@ function signer() {
   return client;
 }
 var outgoingTrace;
+function setTraceHeader(header2) {
+  outgoingTrace = header2;
+}
 var endpoint = (service, region) => `https://${service}.${region}.amazonaws.com`;
 async function fail(res, what) {
   const body = await res.text().catch(() => "");
@@ -6303,13 +6380,18 @@ async function api(url, init, what, fetchImpl = fetch) {
     await fail2(res, what);
   return res;
 }
-async function invoke(url, body, what, fetchImpl = fetch) {
+async function invoke(url, body, what, fetchImpl = fetch, trace) {
   const parsed = new URL(url);
   const audience = parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
   const token = await identityToken2(audience, fetchImpl);
+  const parent = trace ? traceparent(trace) : null;
   const res = await fetchImpl(url, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      ...parent ? { traceparent: parent } : {}
+    },
     body
   });
   if (!res.ok)
@@ -6321,6 +6403,40 @@ function projectOf(project, kind) {
     throw new Error(`no project for the ${kind}: none on the wire and none from the metadata server`);
   }
   return project;
+}
+var TELEMETRY_TRACES = "https://telemetry.googleapis.com/v1/traces";
+async function emitTrace(report, trace, self, where, fetchImpl = fetch) {
+  if (!trace || !where.project)
+    return;
+  const request = spans(report, trace, {
+    service: self,
+    attributes: {
+      "gcp.project_id": where.project,
+      "cloud.provider": "gcp",
+      ...where.region ? { "cloud.region": where.region } : {}
+    }
+  });
+  if (!request)
+    return;
+  try {
+    const res = await api(TELEMETRY_TRACES, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) }, "telemetry.traces.write", fetchImpl);
+    const answer = await res.json().catch(() => null);
+    const rejected = Number(answer?.partialSuccess?.rejectedSpans ?? 0);
+    if (rejected > 0 || answer?.partialSuccess?.errorMessage) {
+      console.error(JSON.stringify({
+        hub: "trace rejected",
+        trace: trace.root,
+        rejected,
+        reason: answer?.partialSuccess?.errorMessage ?? "no reason given"
+      }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({
+      hub: "trace not sent",
+      trace: trace.root,
+      error: err instanceof Error ? err.message : String(err)
+    }));
+  }
 }
 
 // dist/runtimes/flags.js
@@ -6343,12 +6459,32 @@ function eventOf(req) {
   }
   return body;
 }
+var tracingEnabled = () => onish(env2("HUB_TRACE"));
+function header(req, name) {
+  const value = req.headers?.[name];
+  return typeof value === "string" ? value : value?.[0];
+}
+function traceOf(req, arrival) {
+  if (!tracingEnabled())
+    return void 0;
+  const incoming = arrival.trace ?? parseTraceparent(header(req, "traceparent"));
+  const carried = arrival.items.map((item) => read(item.body)?.trace).find((t) => t !== void 0 && isTraceId(t));
+  return {
+    root: incoming?.root ?? carried ?? traceId(),
+    parent: spanId(),
+    opens: true,
+    sampled: true,
+    ...incoming?.parent ? { upstream: incoming.parent } : {}
+  };
+}
 function cloudfunctions(opts = {}) {
   let neighbors;
   return async function handler2(req, res) {
     neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
     const self = env2("NAME") ?? env2("K_SERVICE") ?? "hub";
     const here = await whereAmI(globalThis.fetch);
+    const arrival = await normalize(eventOf(req));
+    const trace = traceOf(req, arrival);
     const ctx = {
       self,
       fetch: globalThis.fetch,
@@ -6356,17 +6492,25 @@ function cloudfunctions(opts = {}) {
       // On Google the account is the project: the catalog's project box declares its
       // `project_id` as the account field.
       account: (n) => n?.props["ACCOUNT"] ?? here.project,
-      now: () => /* @__PURE__ */ new Date()
+      now: () => /* @__PURE__ */ new Date(),
+      ...trace === void 0 ? {} : { trace }
     };
-    const arrival = await normalize(eventOf(req));
+    setTraceHeader(trace ? traceHeader(trace) : void 0);
     const report = await handle(arrival, neighbors, ctx, {
       ...opts.hops === void 0 ? {} : { hops: opts.hops },
+      ...trace === void 0 ? {} : { trace: trace.root },
       // Waiting out the deadline, for a message that asked for `slow`: the platform ends the
       // request at the function's timeout, which this shim cannot read.
       ...onish(env2("HUB_FAULTS")) ? { faults: { stall: () => new Promise(() => {
       }) } } : {}
     });
-    console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
+    setTraceHeader(void 0);
+    console.log(JSON.stringify({
+      hub: report,
+      describe: arrival.describe,
+      ...trace === void 0 ? {} : { traceId: w3cTraceId(trace.root) }
+    }));
+    await emitTrace(report, trace, self, here, globalThis.fetch);
     const failed2 = (report.faults ?? []).length > 0 || REDELIVERED.has(arrival.origin) && report.failed.length > 0;
     res.status(failed2 ? 500 : 200).set("content-type", "application/json").send(JSON.stringify(report));
   };
@@ -8567,7 +8711,7 @@ register({
     if (!url) {
       throw new Error("no function URL on the wire: the function is in another state, or the compile did not export it");
     }
-    await invoke(url, seal(envelope), `invoke ${n.props["NAME"] ?? url}`, ctx.fetch);
+    await invoke(url, seal(envelope), `invoke ${n.props["NAME"] ?? url}`, ctx.fetch, ctx.trace);
   }
 });
 
@@ -8585,7 +8729,7 @@ register({
     if (!url) {
       throw new Error("no service URL on the wire: the service is in another state, or the compile did not export it");
     }
-    await invoke(url, seal(envelope), `POST ${n.props["NAME"] ?? url}`, ctx.fetch);
+    await invoke(url, seal(envelope), `POST ${n.props["NAME"] ?? url}`, ctx.fetch, ctx.trace);
   }
 });
 
@@ -8628,6 +8772,7 @@ register({
 });
 
 // dist/resources/google_pubsub_topic/index.js
+var TRACE_ATTRIBUTE = "googclient_traceparent";
 function topicPath(n, ctx) {
   const name = n.props["NAME"];
   if (!name)
@@ -8641,10 +8786,15 @@ register({
   capabilities: ["topic"],
   async send(n, envelope, ctx) {
     const path = topicPath(n, ctx);
+    const parent = ctx.trace ? traceparent(ctx.trace) : null;
     const res = await api(`https://pubsub.googleapis.com/v1/${path}:publish`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: [{ data: b64(seal(envelope)) }] })
+      body: JSON.stringify({
+        messages: [
+          { data: b64(seal(envelope)), ...parent ? { attributes: { [TRACE_ATTRIBUTE]: parent } } : {} }
+        ]
+      })
     }, "pubsub.topics.publish", ctx.fetch);
     const answer = await res.json().catch(() => null);
     if (answer && Array.isArray(answer.messageIds) && answer.messageIds.length === 0) {
@@ -8665,6 +8815,8 @@ register({
     }
     const attempt = Number(body.deliveryAttempt);
     const subscription = body.subscription.split("/").pop() ?? body.subscription;
+    const attributes2 = message.attributes ?? {};
+    const trace = parseTraceparent(attributes2[TRACE_ATTRIBUTE] ?? attributes2["traceparent"]);
     return {
       origin: "gcp:pubsub",
       describe: `Pub/Sub ${subscription} (1 message)`,
@@ -8676,7 +8828,8 @@ register({
           body: text2,
           ...Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}
         }
-      ]
+      ],
+      ...trace ? { trace } : {}
     };
   }
 });

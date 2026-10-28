@@ -1,4 +1,4 @@
-import { seal } from '../../core/envelope.js';
+import { parseTraceparent, seal, traceparent } from '../../core/envelope.js';
 import { register } from '../../core/registry.js';
 import { b64, unb64 } from '../../providers/base64.js';
 import * as google from '../../providers/google.js';
@@ -21,6 +21,14 @@ interface PushBody {
 	readonly deliveryAttempt?: number;
 }
 
+/**
+ * The message attribute that carries the W3C `traceparent`: the name Google's client libraries
+ * write when their OpenTelemetry tracing is on (`modernAttributeName` in nodejs-pubsub's
+ * src/telemetry-tracing.ts), so a subscriber instrumented with them continues the trace too. A
+ * plain `traceparent` attribute is read as well, for a publisher that is neither.
+ */
+const TRACE_ATTRIBUTE = 'googclient_traceparent';
+
 /** `projects/<project>/topics/<topic>`, from the wire's name or from a full path already on it. */
 function topicPath(n: Neighbor, ctx: Ctx): string {
 	const name = n.props['NAME'];
@@ -35,12 +43,19 @@ register({
 
 	async send(n, envelope, ctx) {
 		const path = topicPath(n, ctx);
+		// The trace travels with the message, as SQS's AWSTraceHeader does: the publisher and the
+		// subscriber never speak to each other.
+		const parent = ctx.trace ? traceparent(ctx.trace) : null;
 		const res = await google.api(
 			`https://pubsub.googleapis.com/v1/${path}:publish`,
 			{
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ messages: [{ data: b64(seal(envelope)) }] }),
+				body: JSON.stringify({
+					messages: [
+						{ data: b64(seal(envelope)), ...(parent ? { attributes: { [TRACE_ATTRIBUTE]: parent } } : {}) },
+					],
+				}),
 			},
 			'pubsub.topics.publish',
 			ctx.fetch
@@ -67,6 +82,8 @@ register({
 		}
 		const attempt = Number(body.deliveryAttempt);
 		const subscription = body.subscription.split('/').pop() ?? body.subscription;
+		const attributes = message.attributes ?? {};
+		const trace = parseTraceparent(attributes[TRACE_ATTRIBUTE] ?? attributes['traceparent']);
 
 		return {
 			origin: 'gcp:pubsub',
@@ -80,6 +97,7 @@ register({
 					...(Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}),
 				},
 			],
+			...(trace ? { trace } : {}),
 		};
 	},
 });

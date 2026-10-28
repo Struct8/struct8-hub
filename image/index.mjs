@@ -5415,6 +5415,28 @@ var hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) 
 var traceId = (at = /* @__PURE__ */ new Date()) => `1-${Math.floor(at.getTime() / 1e3).toString(16).padStart(8, "0")}-${hex(12)}`;
 var spanId = () => hex(8);
 var traceHeader = (trace) => `Root=${trace.root}${trace.parent ? `;Parent=${trace.parent}` : ""};Sampled=${trace.sampled ? "1" : "0"}`;
+var w3cTraceId = (root) => root.slice(2).replace("-", "");
+var xrayRoot = (w3c) => `1-${w3c.slice(0, 8)}-${w3c.slice(8)}`;
+var TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/;
+function parseTraceparent(raw) {
+  if (!raw)
+    return null;
+  const match = TRACEPARENT.exec(raw.trim().toLowerCase());
+  if (!match)
+    return null;
+  const [, version, trace, parent, flags, rest2] = match;
+  if (version === "ff" || version === "00" && rest2 !== void 0)
+    return null;
+  if (/^0+$/.test(trace) || /^0+$/.test(parent))
+    return null;
+  return {
+    root: xrayRoot(trace),
+    parent,
+    // Bit 0 of the flags is `sampled`; the other bits are reserved and say nothing to us.
+    sampled: (parseInt(flags, 16) & 1) === 1
+  };
+}
+var traceparent = (trace) => trace.parent ? `00-${w3cTraceId(trace.root)}-${trace.parent}-${trace.sampled ? "01" : "00"}` : null;
 function open(body, self, opts = {}) {
   return {
     trace: opts.trace ?? traceId(),
@@ -5648,6 +5670,8 @@ function segments(report, trace, self) {
       id: trace.parent ?? spanId(),
       name: self,
       trace_id: trace.root,
+      // The caller's span, so the console draws the line from it to this one.
+      ...trace.upstream ? { parent_id: trace.upstream } : {},
       start_time: seconds(Math.min(...starts)),
       end_time: seconds(Math.max(...ends)),
       annotations: { origin: report.origin, dropped: report.dropped },
@@ -8920,13 +8944,18 @@ async function api(url, init, what, fetchImpl = fetch) {
     await fail2(res, what);
   return res;
 }
-async function invoke(url, body, what, fetchImpl = fetch) {
+async function invoke(url, body, what, fetchImpl = fetch, trace) {
   const parsed = new URL(url);
   const audience = parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
   const token = await identityToken2(audience, fetchImpl);
+  const parent = trace ? traceparent(trace) : null;
   const res = await fetchImpl(url, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      ...parent ? { traceparent: parent } : {}
+    },
     body
   });
   if (!res.ok)
@@ -8954,7 +8983,7 @@ register({
     if (!url) {
       throw new Error("no function URL on the wire: the function is in another state, or the compile did not export it");
     }
-    await invoke(url, seal(envelope), `invoke ${n.props["NAME"] ?? url}`, ctx.fetch);
+    await invoke(url, seal(envelope), `invoke ${n.props["NAME"] ?? url}`, ctx.fetch, ctx.trace);
   }
 });
 
@@ -8972,7 +9001,7 @@ register({
     if (!url) {
       throw new Error("no service URL on the wire: the service is in another state, or the compile did not export it");
     }
-    await invoke(url, seal(envelope), `POST ${n.props["NAME"] ?? url}`, ctx.fetch);
+    await invoke(url, seal(envelope), `POST ${n.props["NAME"] ?? url}`, ctx.fetch, ctx.trace);
   }
 });
 
@@ -9015,6 +9044,7 @@ register({
 });
 
 // dist/resources/google_pubsub_topic/index.js
+var TRACE_ATTRIBUTE = "googclient_traceparent";
 function topicPath(n, ctx) {
   const name = n.props["NAME"];
   if (!name)
@@ -9028,10 +9058,15 @@ register({
   capabilities: ["topic"],
   async send(n, envelope, ctx) {
     const path = topicPath(n, ctx);
+    const parent = ctx.trace ? traceparent(ctx.trace) : null;
     const res = await api(`https://pubsub.googleapis.com/v1/${path}:publish`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: [{ data: b64(seal(envelope)) }] })
+      body: JSON.stringify({
+        messages: [
+          { data: b64(seal(envelope)), ...parent ? { attributes: { [TRACE_ATTRIBUTE]: parent } } : {} }
+        ]
+      })
     }, "pubsub.topics.publish", ctx.fetch);
     const answer = await res.json().catch(() => null);
     if (answer && Array.isArray(answer.messageIds) && answer.messageIds.length === 0) {
@@ -9052,6 +9087,8 @@ register({
     }
     const attempt = Number(body.deliveryAttempt);
     const subscription = body.subscription.split("/").pop() ?? body.subscription;
+    const attributes2 = message.attributes ?? {};
+    const trace = parseTraceparent(attributes2[TRACE_ATTRIBUTE] ?? attributes2["traceparent"]);
     return {
       origin: "gcp:pubsub",
       describe: `Pub/Sub ${subscription} (1 message)`,
@@ -9063,7 +9100,8 @@ register({
           body: text2,
           ...Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}
         }
-      ]
+      ],
+      ...trace ? { trace } : {}
     };
   }
 });

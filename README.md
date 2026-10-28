@@ -29,7 +29,7 @@ against a live account. Nothing here has been applied from a diagram.
 
 | piece | state |
 |---|---|
-| [Wiring contract](CONTRACT.md) v1.2 | documented, matches what the generator emits today |
+| [Wiring contract](CONTRACT.md) v1.3 | documented, matches what the generator emits today |
 | Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (458 in the suite) |
 | AWS resources | done: 24 modules, 20 send targets, 12 event sources ([coverage](docs/coverage.md)) |
 | AWS Lambda runtime | done, invoked end to end against a live account |
@@ -186,7 +186,7 @@ them.
 It is **off unless `HUB_FAULTS` is set**, and only on the Lambda runtime. With it on, anyone allowed
 to publish to what feeds the function can make it fail. Set it only on the function of the lesson.
 
-## Tracing (X-Ray)
+## Tracing (X-Ray and Cloud Trace)
 
 The report can go to X-Ray as well as to the log. Each hop becomes one subsegment — the target's
 name, how long it took, the reason when it failed — and the trace carries on to the next workload,
@@ -223,6 +223,31 @@ Two things carry the trace onward, and both are needed:
 The second is the one no header can do: the sender and the consumer never speak to each other, so
 the trace travels with the message. An event source mapping reads that attribute and opens the
 consumer's invocation under the same trace, which is what joins two functions into one.
+
+### On Google Cloud, and across clouds
+
+A Cloud Function sends its spans to Cloud Trace when `HUB_TRACE` is on. In a diagram that is the
+function's **Send traces to Cloud Trace** setting, which also grants the function's service account
+`roles/telemetry.tracesWriter` and enables the Telemetry API. The spans go up as OpenTelemetry
+(OTLP) through `telemetry.googleapis.com`: one span for the run and one per hop, with the wire's
+label in `struct8.wire`.
+
+A request that crosses clouds stays one trace. The trace id is the same 128 bits in X-Ray and in
+Cloud Trace, written `1-5759e988-bd862e3fe1be46a994272793` in one and
+`5759e988bd862e3fe1be46a994272793` in the other, and the function's log prints the second as
+`traceId`. Each hop toward Google carries the W3C `traceparent`:
+
+| hop | what carries it |
+|---|---|
+| a function or a Cloud Run service | the `traceparent` header |
+| a Pub/Sub topic, for whatever consumes it later | the `googclient_traceparent` message attribute, the one Google's client libraries write |
+
+A Lambda traced in X-Ray that publishes to a topic, and the function that topic pushes to, show up
+under the same id in both consoles, the function's span hanging from the Lambda's. The trace is in
+two backends: each console shows its own side.
+
+**Permission and API:** without the role the log carries `trace not sent: PERMISSION_DENIED`, and
+without the API `SERVICE_DISABLED`. As on AWS, the fan-out happens either way.
 
 ## How it works
 

@@ -20,6 +20,9 @@
  * `CROSS_CLOUD_PARAMETER`.
  */
 
+import { traceparent } from '../core/envelope.js';
+import { spans } from '../core/report.js';
+import type { Report, TraceContext } from '../core/types.js';
 import * as federation from './googleFederation.js';
 
 const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
@@ -214,19 +217,29 @@ export async function api(
  * (`https://<service>-<hash>.a.run.app`) or the function's `url`
  * (`https://<region>-<project>.cloudfunctions.net/<function>`), which is the audience Google's
  * guide to invoking a function uses.
+ *
+ * With a trace being recorded, the request carries it as `traceparent`, the W3C header Cloud Run
+ * reads for its own request span and the Hub on the other side continues (runtimes/
+ * cloudfunctions.ts). Without one the request is exactly what it was before.
  */
 export async function invoke(
 	url: string,
 	body: string,
 	what: string,
-	fetchImpl: typeof fetch = fetch
+	fetchImpl: typeof fetch = fetch,
+	trace?: TraceContext
 ): Promise<Response> {
 	const parsed = new URL(url);
 	const audience = parsed.pathname === '/' ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
 	const token = await identityToken(audience, fetchImpl);
+	const parent = trace ? traceparent(trace) : null;
 	const res = await fetchImpl(url, {
 		method: 'POST',
-		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		headers: {
+			'content-type': 'application/json',
+			authorization: `Bearer ${token}`,
+			...(parent ? { traceparent: parent } : {}),
+		},
 		body,
 	});
 	if (!res.ok) await fail(res, what);
@@ -239,4 +252,82 @@ export function projectOf(project: string | undefined, kind: string): string {
 		throw new Error(`no project for the ${kind}: none on the wire and none from the metadata server`);
 	}
 	return project;
+}
+
+// ---------------------------------------------------------------------------
+// Cloud Trace
+// ---------------------------------------------------------------------------
+
+/**
+ * The Telemetry API's OTLP endpoint for traces: OpenTelemetry's protocol, written to Cloud Trace.
+ *
+ * Chosen over the Cloud Trace API (`cloudtrace.googleapis.com`, `batchWrite`) because the payload
+ * is plain OTLP, the same bytes a collector would send, and Google documents the Telemetry API as
+ * the one with the higher ingestion quotas. It takes `http/json`, so it needs no protobuf encoder.
+ */
+export const TELEMETRY_TRACES = 'https://telemetry.googleapis.com/v1/traces';
+
+/**
+ * Sends the trail to Cloud Trace, and never lets that failure become the workload's failure: the
+ * same rule, for the same reason, as `emitTrace` in providers/aws.ts.
+ *
+ * `gcp.project_id` is the project the spans are written to, and the Telemetry API refuses a
+ * request without it ("Resource is missing gcp.project_id resource attribute"). It is the
+ * workload's own project, read from the metadata server. With no project there is nowhere to
+ * write, and nothing is sent.
+ *
+ * The failures that matter are the likely ones, and the log names them: `PERMISSION_DENIED`
+ * until the service account has `telemetry.traces.write` (the role `roles/telemetry.tracesWriter`),
+ * and `SERVICE_DISABLED` until the project enables `telemetry.googleapis.com`.
+ */
+export async function emitTrace(
+	report: Report,
+	trace: TraceContext | undefined,
+	self: string,
+	where: Place,
+	fetchImpl: typeof fetch = fetch
+): Promise<void> {
+	if (!trace || !where.project) return;
+
+	const request = spans(report, trace, {
+		service: self,
+		attributes: {
+			'gcp.project_id': where.project,
+			'cloud.provider': 'gcp',
+			...(where.region ? { 'cloud.region': where.region } : {}),
+		},
+	});
+	if (!request) return;
+
+	try {
+		const res = await api(
+			TELEMETRY_TRACES,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) },
+			'telemetry.traces.write',
+			fetchImpl
+		);
+		// A partly refused request answers 200, as X-Ray does, and says what it threw away in the body.
+		const answer = (await res.json().catch(() => null)) as {
+			partialSuccess?: { rejectedSpans?: string | number; errorMessage?: string };
+		} | null;
+		const rejected = Number(answer?.partialSuccess?.rejectedSpans ?? 0);
+		if (rejected > 0 || answer?.partialSuccess?.errorMessage) {
+			console.error(
+				JSON.stringify({
+					hub: 'trace rejected',
+					trace: trace.root,
+					rejected,
+					reason: answer?.partialSuccess?.errorMessage ?? 'no reason given',
+				})
+			);
+		}
+	} catch (err) {
+		console.error(
+			JSON.stringify({
+				hub: 'trace not sent',
+				trace: trace.root,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		);
+	}
 }

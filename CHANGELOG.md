@@ -14,6 +14,16 @@ AWS account.
 
 ### Added
 
+- One trace across AWS and Google Cloud. `core/envelope.ts` converts between the X-Ray root and
+  the W3C trace id and reads and writes `traceparent`. A request to a function or a Cloud Run
+  service carries the `traceparent` header, and a Pub/Sub message the `googclient_traceparent`
+  attribute; the topic's receiver reads it back. With `HUB_TRACE` on, a Cloud Function opens a
+  span of its own under the trace it received (the message's, the header's, or the envelope's),
+  and `providers/google.ts` sends the run and its hops to Cloud Trace as OTLP JSON through the
+  Telemetry API (`core/report.ts`, `spans`). An opening X-Ray segment now names its caller in
+  `parent_id` when the run knows it (`TraceContext.upstream`). Nothing has run against Google yet.
+- **Contract v1.3**: traces across workloads and clouds (§6.3), and `HUB_TRACE` on a Google
+  Cloud function.
 - A workload on AWS reaches Google Cloud with no Google key: `providers/googleFederation.ts`
   reads Google's credential configuration from the Systems Manager parameter that
   `CROSS_CLOUD_PARAMETER` names, exchanges a signed STS `GetCallerIdentity` at Google STS, and
