@@ -1140,25 +1140,25 @@ var require_utils = __commonJS({
       if (isBCYear) ret += " BC";
       return ret;
     }
-    function normalizeQueryConfig(config, values, callback) {
-      config = typeof config === "string" ? { text: config } : cloneQueryConfig(config);
+    function normalizeQueryConfig(config2, values, callback) {
+      config2 = typeof config2 === "string" ? { text: config2 } : cloneQueryConfig(config2);
       if (values) {
         if (typeof values === "function") {
-          config.callback = values;
+          config2.callback = values;
         } else {
-          config.values = values;
+          config2.values = values;
         }
       }
       if (callback) {
-        config.callback = callback;
+        config2.callback = callback;
       }
-      return config;
+      return config2;
     }
-    function cloneQueryConfig(config) {
-      if (config == null) {
-        return config;
+    function cloneQueryConfig(config2) {
+      if (config2 == null) {
+        return config2;
       }
-      return Object.defineProperties(Object.create(Object.getPrototypeOf(config)), Object.getOwnPropertyDescriptors(config));
+      return Object.defineProperties(Object.create(Object.getPrototypeOf(config2)), Object.getOwnPropertyDescriptors(config2));
     }
     var escapeIdentifier2 = function(str) {
       return '"' + str.replace(/"/g, '""') + '"';
@@ -1590,10 +1590,10 @@ var require_pg_connection_string = __commonJS({
     "use strict";
     function parse(str, options = {}) {
       if (str.charAt(0) === "/") {
-        const config2 = str.split(" ");
-        return { host: config2[0], database: config2[1] };
+        const config3 = str.split(" ");
+        return { host: config3[0], database: config3[1] };
       }
-      const config = /* @__PURE__ */ Object.create(null);
+      const config2 = /* @__PURE__ */ Object.create(null);
       let result;
       let dummyHost = false;
       if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) {
@@ -1611,78 +1611,78 @@ var require_pg_connection_string = __commonJS({
         throw err;
       }
       for (const entry of result.searchParams.entries()) {
-        config[entry[0]] = entry[1];
+        config2[entry[0]] = entry[1];
       }
-      config.user = config.user || decodeURIComponent(result.username);
-      config.password = config.password || decodeURIComponent(result.password);
+      config2.user = config2.user || decodeURIComponent(result.username);
+      config2.password = config2.password || decodeURIComponent(result.password);
       if (result.protocol == "socket:") {
-        config.host = decodeURI(result.pathname);
-        config.database = result.searchParams.get("db");
-        config.client_encoding = result.searchParams.get("encoding");
-        return config;
+        config2.host = decodeURI(result.pathname);
+        config2.database = result.searchParams.get("db");
+        config2.client_encoding = result.searchParams.get("encoding");
+        return config2;
       }
       const hostname = (dummyHost ? "" : result.hostname).replace(/^\[(.+)\]$/, "$1");
-      if (!config.host) {
-        config.host = decodeURIComponent(hostname);
+      if (!config2.host) {
+        config2.host = decodeURIComponent(hostname);
       } else if (hostname && /^%2f/i.test(hostname)) {
         result.pathname = hostname + result.pathname;
       }
-      if (!config.port) {
-        config.port = result.port;
+      if (!config2.port) {
+        config2.port = result.port;
       }
       const pathname = result.pathname.slice(1) || null;
-      config.database = pathname ? decodeURI(pathname) : null;
-      if (config.ssl === "true" || config.ssl === "1") {
-        config.ssl = true;
+      config2.database = pathname ? decodeURI(pathname) : null;
+      if (config2.ssl === "true" || config2.ssl === "1") {
+        config2.ssl = true;
       }
-      if (config.ssl === "0") {
-        config.ssl = false;
+      if (config2.ssl === "0") {
+        config2.ssl = false;
       }
-      if (config.sslcert || config.sslkey || config.sslrootcert || config.sslmode) {
-        config.ssl = {};
+      if (config2.sslcert || config2.sslkey || config2.sslrootcert || config2.sslmode) {
+        config2.ssl = {};
       }
-      if (config.sslnegotiation === "direct" && config.ssl === void 0) {
-        config.ssl = true;
+      if (config2.sslnegotiation === "direct" && config2.ssl === void 0) {
+        config2.ssl = true;
       }
-      const fs = config.sslcert || config.sslkey || config.sslrootcert ? __require("fs") : null;
-      if (config.sslcert) {
-        config.ssl.cert = fs.readFileSync(config.sslcert).toString();
+      const fs = config2.sslcert || config2.sslkey || config2.sslrootcert ? __require("fs") : null;
+      if (config2.sslcert) {
+        config2.ssl.cert = fs.readFileSync(config2.sslcert).toString();
       }
-      if (config.sslkey) {
-        config.ssl.key = fs.readFileSync(config.sslkey).toString();
+      if (config2.sslkey) {
+        config2.ssl.key = fs.readFileSync(config2.sslkey).toString();
       }
-      if (config.sslrootcert) {
-        config.ssl.ca = fs.readFileSync(config.sslrootcert).toString();
+      if (config2.sslrootcert) {
+        config2.ssl.ca = fs.readFileSync(config2.sslrootcert).toString();
       }
-      if (options.useLibpqCompat && config.uselibpqcompat) {
+      if (options.useLibpqCompat && config2.uselibpqcompat) {
         throw new Error("Both useLibpqCompat and uselibpqcompat are set. Please use only one of them.");
       }
-      if (config.uselibpqcompat === "true" || options.useLibpqCompat) {
-        switch (config.sslmode) {
+      if (config2.uselibpqcompat === "true" || options.useLibpqCompat) {
+        switch (config2.sslmode) {
           case "disable": {
-            config.ssl = false;
+            config2.ssl = false;
             break;
           }
           case "prefer": {
-            config.ssl.rejectUnauthorized = false;
+            config2.ssl.rejectUnauthorized = false;
             break;
           }
           case "require": {
-            if (config.sslrootcert) {
-              config.ssl.checkServerIdentity = function() {
+            if (config2.sslrootcert) {
+              config2.ssl.checkServerIdentity = function() {
               };
             } else {
-              config.ssl.rejectUnauthorized = false;
+              config2.ssl.rejectUnauthorized = false;
             }
             break;
           }
           case "verify-ca": {
-            if (!config.ssl.ca) {
+            if (!config2.ssl.ca) {
               throw new Error(
                 "SECURITY WARNING: Using sslmode=verify-ca requires specifying a CA with sslrootcert. If a public CA is used, verify-ca allows connections to a server that somebody else may have registered with the CA, making you vulnerable to Man-in-the-Middle attacks. Either specify a custom CA certificate with sslrootcert parameter or use sslmode=verify-full for proper security."
               );
             }
-            config.ssl.checkServerIdentity = function() {
+            config2.ssl.checkServerIdentity = function() {
             };
             break;
           }
@@ -1691,27 +1691,27 @@ var require_pg_connection_string = __commonJS({
           }
         }
       } else {
-        switch (config.sslmode) {
+        switch (config2.sslmode) {
           case "disable": {
-            config.ssl = false;
+            config2.ssl = false;
             break;
           }
           case "prefer":
           case "require":
           case "verify-ca":
           case "verify-full": {
-            if (config.sslmode !== "verify-full") {
-              deprecatedSslModeWarning(config.sslmode);
+            if (config2.sslmode !== "verify-full") {
+              deprecatedSslModeWarning(config2.sslmode);
             }
             break;
           }
           case "no-verify": {
-            config.ssl.rejectUnauthorized = false;
+            config2.ssl.rejectUnauthorized = false;
             break;
           }
         }
       }
-      return config;
+      return config2;
     }
     function toConnectionOptions(sslConfig) {
       const connectionOptions = Object.entries(sslConfig).reduce((c, [key, value]) => {
@@ -1722,8 +1722,8 @@ var require_pg_connection_string = __commonJS({
       }, /* @__PURE__ */ Object.create(null));
       return connectionOptions;
     }
-    function toClientConfig(config) {
-      const poolConfig = Object.entries(config).reduce((c, [key, value]) => {
+    function toClientConfig(config2) {
+      const poolConfig = Object.entries(config2).reduce((c, [key, value]) => {
         if (key === "ssl") {
           const sslConfig = value;
           if (typeof sslConfig === "boolean") {
@@ -1779,9 +1779,9 @@ var require_connection_parameters = __commonJS({
     var dns = __require("dns");
     var defaults2 = require_defaults();
     var parse = require_pg_connection_string().parse;
-    var val = function(key, config, envVar) {
-      if (config[key]) {
-        return config[key];
+    var val = function(key, config2, envVar) {
+      if (config2[key]) {
+        return config2[key];
       }
       if (envVar === void 0) {
         envVar = process.env["PG" + key.toUpperCase()];
@@ -1808,34 +1808,34 @@ var require_connection_parameters = __commonJS({
     var quoteParamValue = function(value) {
       return "'" + ("" + value).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
     };
-    var add = function(params, config, paramName) {
-      const value = config[paramName];
+    var add = function(params, config2, paramName) {
+      const value = config2[paramName];
       if (value !== void 0 && value !== null) {
         params.push(paramName + "=" + quoteParamValue(value));
       }
     };
     var ConnectionParameters = class {
-      constructor(config) {
-        config = typeof config === "string" ? parse(config) : config || {};
-        if (config.connectionString) {
-          config = Object.assign({}, config, parse(config.connectionString));
+      constructor(config2) {
+        config2 = typeof config2 === "string" ? parse(config2) : config2 || {};
+        if (config2.connectionString) {
+          config2 = Object.assign({}, config2, parse(config2.connectionString));
         }
-        this.user = val("user", config);
-        this.database = val("database", config);
+        this.user = val("user", config2);
+        this.database = val("database", config2);
         if (this.database === void 0) {
           this.database = this.user;
         }
-        this.port = parseInt(val("port", config), 10);
-        this.host = val("host", config);
+        this.port = parseInt(val("port", config2), 10);
+        this.host = val("host", config2);
         Object.defineProperty(this, "password", {
           configurable: true,
           enumerable: false,
           writable: true,
-          value: val("password", config)
+          value: val("password", config2)
         });
-        this.binary = val("binary", config);
-        this.options = val("options", config);
-        this.ssl = typeof config.ssl === "undefined" ? readSSLConfigFromEnvironment() : config.ssl;
+        this.binary = val("binary", config2);
+        this.options = val("options", config2);
+        this.ssl = typeof config2.ssl === "undefined" ? readSSLConfigFromEnvironment() : config2.ssl;
         if (typeof this.ssl === "string") {
           if (this.ssl === "true") {
             this.ssl = true;
@@ -1849,7 +1849,7 @@ var require_connection_parameters = __commonJS({
             enumerable: false
           });
         }
-        this.sslnegotiation = val("sslnegotiation", config, "PGSSLNEGOTIATION");
+        this.sslnegotiation = val("sslnegotiation", config2, "PGSSLNEGOTIATION");
         if (this.sslnegotiation !== void 0 && this.sslnegotiation !== "postgres" && this.sslnegotiation !== "direct") {
           throw new Error(
             `Invalid sslnegotiation value: "${this.sslnegotiation}". Valid values are "postgres" and "direct".`
@@ -1858,27 +1858,27 @@ var require_connection_parameters = __commonJS({
         if (this.sslnegotiation === "direct" && !this.ssl) {
           throw new Error("sslnegotiation=direct requires SSL to be enabled");
         }
-        this.client_encoding = val("client_encoding", config);
-        this.replication = val("replication", config);
+        this.client_encoding = val("client_encoding", config2);
+        this.replication = val("replication", config2);
         this.isDomainSocket = !(this.host || "").indexOf("/");
-        this.application_name = val("application_name", config, "PGAPPNAME");
-        this.fallback_application_name = val("fallback_application_name", config, false);
-        this.statement_timeout = val("statement_timeout", config, false);
-        this.lock_timeout = val("lock_timeout", config, false);
-        this.idle_in_transaction_session_timeout = val("idle_in_transaction_session_timeout", config, false);
-        this.query_timeout = val("query_timeout", config, false);
-        if (config.connectionTimeoutMillis === void 0) {
+        this.application_name = val("application_name", config2, "PGAPPNAME");
+        this.fallback_application_name = val("fallback_application_name", config2, false);
+        this.statement_timeout = val("statement_timeout", config2, false);
+        this.lock_timeout = val("lock_timeout", config2, false);
+        this.idle_in_transaction_session_timeout = val("idle_in_transaction_session_timeout", config2, false);
+        this.query_timeout = val("query_timeout", config2, false);
+        if (config2.connectionTimeoutMillis === void 0) {
           this.connect_timeout = process.env.PGCONNECT_TIMEOUT || 0;
         } else {
-          this.connect_timeout = Math.floor(config.connectionTimeoutMillis / 1e3);
+          this.connect_timeout = Math.floor(config2.connectionTimeoutMillis / 1e3);
         }
-        if (config.keepAlive === false) {
+        if (config2.keepAlive === false) {
           this.keepalives = 0;
-        } else if (config.keepAlive === true) {
+        } else if (config2.keepAlive === true) {
           this.keepalives = 1;
         }
-        if (typeof config.keepAliveInitialDelayMillis === "number") {
-          this.keepalives_idle = Math.floor(config.keepAliveInitialDelayMillis / 1e3);
+        if (typeof config2.keepAliveInitialDelayMillis === "number") {
+          this.keepalives_idle = Math.floor(config2.keepAliveInitialDelayMillis / 1e3);
         }
       }
       getLibpqConnectionString(cb) {
@@ -2022,21 +2022,21 @@ var require_query = __commonJS({
     var Result2 = require_result();
     var utils = require_utils();
     var Query2 = class extends EventEmitter {
-      constructor(config, values, callback) {
+      constructor(config2, values, callback) {
         super();
-        config = utils.normalizeQueryConfig(config, values, callback);
-        this.text = config.text;
-        this.values = config.values;
-        this.rows = config.rows;
-        this.types = config.types;
-        this.name = config.name;
-        this.queryMode = config.queryMode;
-        this.binary = config.binary;
-        this.portal = config.portal || "";
-        this.callback = config.callback;
-        this._rowMode = config.rowMode;
-        if (process.domain && config.callback) {
-          this.callback = process.domain.bind(config.callback);
+        config2 = utils.normalizeQueryConfig(config2, values, callback);
+        this.text = config2.text;
+        this.values = config2.values;
+        this.rows = config2.rows;
+        this.types = config2.types;
+        this.name = config2.name;
+        this.queryMode = config2.queryMode;
+        this.binary = config2.binary;
+        this.portal = config2.portal || "";
+        this.callback = config2.callback;
+        this._rowMode = config2.rowMode;
+        if (process.domain && config2.callback) {
+          this.callback = process.domain.bind(config2.callback);
         }
         this._result = new Result2(this._rowMode, this.types);
         this._results = this._result;
@@ -2581,18 +2581,18 @@ var require_serializer = __commonJS({
         buf[formatsOffset++] = formatByte;
       }
     };
-    var bind = (config = {}) => {
-      const portal = config.portal || "";
-      const statement = config.statement || "";
-      const binary = config.binary || false;
-      const values = config.values || emptyArray;
+    var bind = (config2 = {}) => {
+      const portal = config2.portal || "";
+      const statement = config2.statement || "";
+      const binary = config2.binary || false;
+      const values = config2.values || emptyArray;
       const len = values.length;
       writer.addCString(portal).addCString(statement);
       writer.addInt16(len);
       const formatsOffset = writer.reserveUnsafe(len * 2);
       writer.addInt16(len);
       try {
-        writeValues(values, config.valueMapper, formatsOffset);
+        writeValues(values, config2.valueMapper, formatsOffset);
       } catch (err) {
         writer.clear();
         throw err;
@@ -2608,12 +2608,12 @@ var require_serializer = __commonJS({
       );
     };
     var emptyExecute = Buffer.from([69, 0, 0, 0, 9, 0, 0, 0, 0, 0]);
-    var execute = (config) => {
-      if (!config || !config.portal && !config.rows) {
+    var execute = (config2) => {
+      if (!config2 || !config2.portal && !config2.rows) {
         return emptyExecute;
       }
-      const portal = config.portal || "";
-      const rows = config.rows || 0;
+      const portal = config2.portal || "";
+      const rows = config2.rows || 0;
       const portalLength = Buffer.byteLength(portal);
       const len = 4 + portalLength + 1 + 4;
       const buff = Buffer.allocUnsafe(1 + len);
@@ -3185,19 +3185,19 @@ var require_connection = __commonJS({
     var syncBuffer = serialize.sync();
     var endBuffer = serialize.end();
     var Connection2 = class extends EventEmitter {
-      constructor(config) {
+      constructor(config2) {
         super();
-        config = config || {};
-        this.stream = config.stream || getStream(config.ssl);
+        config2 = config2 || {};
+        this.stream = config2.stream || getStream(config2.ssl);
         if (typeof this.stream === "function") {
-          this.stream = this.stream(config);
+          this.stream = this.stream(config2);
         }
-        this._keepAlive = config.keepAlive;
-        this._keepAliveInitialDelayMillis = config.keepAliveInitialDelayMillis;
+        this._keepAlive = config2.keepAlive;
+        this._keepAliveInitialDelayMillis = config2.keepAliveInitialDelayMillis;
         this.parsedStatements = {};
         this.submittedNamedStatements = {};
-        this.ssl = config.ssl || false;
-        this.sslNegotiation = config.sslNegotiation || "postgres";
+        this.ssl = config2.ssl || false;
+        this.sslNegotiation = config2.sslNegotiation || "postgres";
         this._ending = false;
         this._emitMessage = false;
         const self = this;
@@ -3295,8 +3295,8 @@ var require_connection = __commonJS({
       requestSsl() {
         this.stream.write(serialize.requestSsl());
       }
-      startup(config) {
-        this.stream.write(serialize.startup(config));
+      startup(config2) {
+        this.stream.write(serialize.startup(config2));
       }
       cancel(processID, secretKey) {
         this._send(serialize.cancel(processID, secretKey));
@@ -3324,12 +3324,12 @@ var require_connection = __commonJS({
         this._send(serialize.parse(query2));
       }
       // send bind message
-      bind(config) {
-        this._send(serialize.bind(config));
+      bind(config2) {
+        this._send(serialize.bind(config2));
       }
       // send execute message
-      execute(config) {
-        this._send(serialize.execute(config));
+      execute(config2) {
+        this._send(serialize.execute(config2));
       }
       flush() {
         if (this.stream.writable) {
@@ -3518,8 +3518,8 @@ var require_helper = __commonJS({
       return old;
     };
     module.exports.getFileName = function(rawEnv) {
-      var env2 = rawEnv || process.env;
-      var file = env2.PGPASSFILE || (isWin ? path.join(env2.APPDATA || "./", "postgresql", "pgpass.conf") : path.join(env2.HOME || "./", ".pgpass"));
+      var env3 = rawEnv || process.env;
+      var file = env3.PGPASSFILE || (isWin ? path.join(env3.APPDATA || "./", "postgresql", "pgpass.conf") : path.join(env3.HOME || "./", ".pgpass"));
       return file;
     };
     module.exports.usePgPass = function(stats, fname) {
@@ -3717,9 +3717,9 @@ var require_client = __commonJS({
       return defaultValue;
     }
     var Client2 = class extends EventEmitter {
-      constructor(config) {
+      constructor(config2) {
         super();
-        this.connectionParameters = new ConnectionParameters(config);
+        this.connectionParameters = new ConnectionParameters(config2);
         this.user = this.connectionParameters.user;
         this.database = this.connectionParameters.database;
         this.port = this.connectionParameters.port;
@@ -3731,7 +3731,7 @@ var require_client = __commonJS({
           value: this.connectionParameters.password
         });
         this.replication = this.connectionParameters.replication;
-        const c = config || {};
+        const c = config2 || {};
         if (c.Promise) {
           byoPromiseDeprecationNotice();
         }
@@ -4231,14 +4231,14 @@ var require_client = __commonJS({
           this.emit("drain");
         }
       }
-      query(config, values, callback) {
+      query(config2, values, callback) {
         let query2;
         let result;
-        if (config == null) {
+        if (config2 == null) {
           throw new TypeError("Client was passed a null or undefined query");
         }
-        if (typeof config.submit === "function") {
-          result = query2 = config;
+        if (typeof config2.submit === "function") {
+          result = query2 = config2;
           if (!query2.callback) {
             if (typeof values === "function") {
               query2.callback = values;
@@ -4247,7 +4247,7 @@ var require_client = __commonJS({
             }
           }
         } else {
-          query2 = new Query2(config, values, callback);
+          query2 = new Query2(config2, values, callback);
           if (!query2.callback) {
             result = new this._Promise((resolve, reject) => {
               query2.callback = (err, res) => err ? reject(err) : resolve(res);
@@ -4259,7 +4259,7 @@ var require_client = __commonJS({
             throw new TypeError("callback is not a function");
           }
         }
-        const readTimeout = config.query_timeout || this.connectionParameters.query_timeout;
+        const readTimeout = config2.query_timeout || this.connectionParameters.query_timeout;
         if (readTimeout) {
           const queryCallback = query2.callback || (() => {
           });
@@ -4292,7 +4292,7 @@ var require_client = __commonJS({
           query2._result._types = this._types;
         }
         if (this.pipeline) {
-          const portalQuery = typeof config.submit === "function" && !(query2 instanceof Query2) ? "Custom query classes such as pg-cursor and pg-query-stream are" : query2.rows ? "The `rows` option is" : null;
+          const portalQuery = typeof config2.submit === "function" && !(query2 instanceof Query2) ? "Custom query classes such as pg-cursor and pg-query-stream are" : query2.rows ? "The `rows` option is" : null;
           if (portalQuery) {
             process.nextTick(() => {
               query2.handleError(new Error(`${portalQuery} not supported in pipeline mode`), this.connection);
@@ -4798,16 +4798,16 @@ var require_query2 = __commonJS({
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
     var utils = require_utils();
-    var NativeQuery = module.exports = function(config, values, callback) {
+    var NativeQuery = module.exports = function(config2, values, callback) {
       EventEmitter.call(this);
-      config = utils.normalizeQueryConfig(config, values, callback);
-      this.text = config.text;
-      this.values = config.values;
-      this.name = config.name;
-      this.queryMode = config.queryMode;
-      this.callback = config.callback;
+      config2 = utils.normalizeQueryConfig(config2, values, callback);
+      this.text = config2.text;
+      this.values = config2.values;
+      this.name = config2.name;
+      this.queryMode = config2.queryMode;
+      this.callback = config2.callback;
       this.state = "new";
-      this._arrayMode = config.rowMode === "array";
+      this._arrayMode = config2.rowMode === "array";
       this._emitRowEvents = false;
       this.on(
         "newListener",
@@ -4954,11 +4954,11 @@ var require_client2 = __commonJS({
       },
       "Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead."
     );
-    var Client2 = module.exports = function(config) {
+    var Client2 = module.exports = function(config2) {
       EventEmitter.call(this);
-      config = config || {};
-      this._Promise = config.Promise || global.Promise;
-      this._types = new TypeOverrides2(config.types);
+      config2 = config2 || {};
+      this._Promise = config2.Promise || global.Promise;
+      this._types = new TypeOverrides2(config2.types);
       this.native = new Native({
         types: this._types
       });
@@ -4967,10 +4967,10 @@ var require_client2 = __commonJS({
       this._connecting = false;
       this._connected = false;
       this._queryable = true;
-      this.pipeline = Boolean(config.pipeline);
+      this.pipeline = Boolean(config2.pipeline);
       this._pipelineInFlight = false;
-      const cp = this.connectionParameters = new ConnectionParameters(config);
-      if (config.nativeConnectionString) cp.nativeConnectionString = config.nativeConnectionString;
+      const cp = this.connectionParameters = new ConnectionParameters(config2);
+      if (config2.nativeConnectionString) cp.nativeConnectionString = config2.nativeConnectionString;
       this.user = cp.user;
       Object.defineProperty(this, "password", {
         configurable: true,
@@ -5047,23 +5047,23 @@ var require_client2 = __commonJS({
         });
       });
     };
-    Client2.prototype.query = function(config, values, callback) {
+    Client2.prototype.query = function(config2, values, callback) {
       let query2;
       let result;
       let readTimeout;
       let readTimeoutTimer;
       let queryCallback;
-      if (config === null || config === void 0) {
+      if (config2 === null || config2 === void 0) {
         throw new TypeError("Client was passed a null or undefined query");
-      } else if (typeof config.submit === "function") {
-        readTimeout = config.query_timeout || this.connectionParameters.query_timeout;
-        result = query2 = config;
+      } else if (typeof config2.submit === "function") {
+        readTimeout = config2.query_timeout || this.connectionParameters.query_timeout;
+        result = query2 = config2;
         if (typeof values === "function") {
-          config.callback = values;
+          config2.callback = values;
         }
       } else {
-        readTimeout = config.query_timeout || this.connectionParameters.query_timeout;
-        query2 = new NativeQuery(config, values, callback);
+        readTimeout = config2.query_timeout || this.connectionParameters.query_timeout;
+        query2 = new NativeQuery(config2, values, callback);
         if (!query2.callback) {
           let resolveOut, rejectOut;
           result = new this._Promise((resolve, reject) => {
@@ -5765,13 +5765,13 @@ var AwsClient = class {
       input = url;
     }
     const signer2 = new AwsV4Signer(Object.assign({ url: input.toString() }, init, this, init && init.aws));
-    const signed = Object.assign({}, init, await signer2.sign());
-    delete signed.aws;
+    const signed2 = Object.assign({}, init, await signer2.sign());
+    delete signed2.aws;
     try {
-      return new Request(signed.url.toString(), signed);
+      return new Request(signed2.url.toString(), signed2);
     } catch (e) {
       if (e instanceof TypeError) {
-        return new Request(signed.url.toString(), Object.assign({ duplex: "half" }, signed));
+        return new Request(signed2.url.toString(), Object.assign({ duplex: "half" }, signed2));
       }
       throw e;
     }
@@ -6015,13 +6015,13 @@ var client;
 function signer() {
   if (client)
     return client;
-  const env2 = typeof process === "undefined" ? {} : process.env;
-  const accessKeyId = env2["AWS_ACCESS_KEY_ID"];
-  const secretAccessKey = env2["AWS_SECRET_ACCESS_KEY"];
+  const env3 = typeof process === "undefined" ? {} : process.env;
+  const accessKeyId = env3["AWS_ACCESS_KEY_ID"];
+  const secretAccessKey = env3["AWS_SECRET_ACCESS_KEY"];
   if (!accessKeyId || !secretAccessKey) {
     throw new Error("no AWS credentials: none in the environment and none supplied through credentials()");
   }
-  const sessionToken = env2["AWS_SESSION_TOKEN"];
+  const sessionToken = env3["AWS_SESSION_TOKEN"];
   client = new AwsClient({
     accessKeyId,
     secretAccessKey,
@@ -6063,8 +6063,8 @@ async function send(url, service, region, init, what, fetchImpl) {
   const headers = new Headers(init.headers);
   if (outgoingTrace)
     headers.set("x-amzn-trace-id", outgoingTrace);
-  const signed = await signer().sign(url, { ...init, headers, aws: { service, region } });
-  const res = await fetchImpl(signed);
+  const signed2 = await signer().sign(url, { ...init, headers, aws: { service, region } });
+  const res = await fetchImpl(signed2);
   if (!res.ok)
     await fail(res, what);
   return res;
@@ -6100,8 +6100,11 @@ async function query(service, region, params, fetchImpl = fetch) {
   }, params["Action"] ?? service, fetchImpl);
 }
 async function presign(url, service, region) {
-  const signed = await signer().sign(url, { method: "GET", aws: { service, region, signQuery: true } });
-  return signed.url;
+  const signed2 = await signer().sign(url, { method: "GET", aws: { service, region, signQuery: true } });
+  return signed2.url;
+}
+async function signed(url, service, region, init) {
+  return signer().sign(url, { ...init, aws: { service, region } });
 }
 var rest = (url, service, region, init, what, fetchImpl = fetch) => send(url, service, region, init, what, fetchImpl);
 async function plain(url, init, what, fetchImpl = fetch) {
@@ -6434,8 +6437,8 @@ async function authToken(host, port, user, region) {
   url.searchParams.set("Action", "connect");
   url.searchParams.set("DBUser", user);
   url.searchParams.set("X-Amz-Expires", String(TOKEN_SECONDS));
-  const signed = await presign(url.toString(), "rds-db", region);
-  return signed.replace(/^https:\/\//, "");
+  const signed2 = await presign(url.toString(), "rds-db", region);
+  return signed2.replace(/^https:\/\//, "");
 }
 
 // dist/providers/sql.js
@@ -7328,19 +7331,19 @@ var tlsDial = (target, timeoutMs) => new Promise((resolve, reject) => {
     rejectUnauthorized: true
   });
   const timer = setTimeout(() => {
-    socket.off("error", failed);
+    socket.off("error", failed2);
     socket.destroy();
     reject(Object.assign(new Error(`no answer from ${target.host}:${target.port}`), { code: "ETIMEDOUT" }));
   }, timeoutMs);
-  function failed(err) {
+  function failed2(err) {
     clearTimeout(timer);
     socket.destroy();
     reject(err);
   }
-  socket.once("error", failed);
+  socket.once("error", failed2);
   socket.once("secureConnect", () => {
     clearTimeout(timer);
-    socket.off("error", failed);
+    socket.off("error", failed2);
     resolve(socket);
   });
 });
@@ -7585,9 +7588,9 @@ function writeError(reported, fallback) {
 }
 function failedWrite(answer) {
   const errors = Array.isArray(answer["writeErrors"]) ? answer["writeErrors"] : [];
-  const failed = errors.find((e) => e["code"] !== DUPLICATE_KEY);
-  if (failed)
-    return writeError(failed, "the insert was refused");
+  const failed2 = errors.find((e) => e["code"] !== DUPLICATE_KEY);
+  if (failed2)
+    return writeError(failed2, "the insert was refused");
   const concern = answer["writeConcernError"];
   if (concern && typeof concern === "object")
     return writeError(concern, "the write concern was not met");
@@ -7659,9 +7662,9 @@ register({
         ensured.add(where);
       }
       const answer = await connection2.command(DATABASE, { insert: COLLECTION, documents: [documentOf(record, ctx)], ordered: true });
-      const failed = failedWrite(answer);
-      if (failed)
-        throw failed;
+      const failed2 = failedWrite(answer);
+      if (failed2)
+        throw failed2;
     } catch (err) {
       throw explained(err);
     } finally {
@@ -8398,14 +8401,168 @@ register({
   }
 });
 
+// dist/providers/googleFederation.js
+var PARAMETER_VARIABLE = "CROSS_CLOUD_PARAMETER";
+var SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+var AWS_SUBJECT = "urn:ietf:params:aws:token-type:aws4_request";
+var DEFAULT_VERIFICATION = "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15";
+var EARLY_MS = 6e4;
+var IDENTITY_TTL_MS = 55 * 6e4;
+var config;
+var federated;
+var access;
+var identities = /* @__PURE__ */ new Map();
+function env2() {
+  return typeof process === "undefined" ? {} : process.env;
+}
+function configured() {
+  return Boolean(env2()[PARAMETER_VARIABLE]);
+}
+function regionOf() {
+  const region = env2()["AWS_REGION"] ?? env2()["AWS_DEFAULT_REGION"];
+  if (!region)
+    throw new Error("no AWS Region in the environment to read the Google configuration from");
+  return region;
+}
+function configuration(fetchImpl) {
+  if (config)
+    return config;
+  const name = env2()[PARAMETER_VARIABLE];
+  const pending = (async () => {
+    if (!name)
+      throw new Error(`no Google credentials: ${PARAMETER_VARIABLE} is not set`);
+    const answer = await json("ssm", regionOf(), "AmazonSSM.GetParameter", { Name: name, WithDecryption: true }, fetchImpl);
+    const value = answer?.Parameter?.Value;
+    if (typeof value !== "string" || !value)
+      throw new Error(`the parameter ${name} has no value`);
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error(`the parameter ${name} does not hold JSON`);
+    }
+    if (parsed.type !== "external_account" || !parsed.audience || !parsed.token_url) {
+      throw new Error(`the parameter ${name} does not hold a Google external account configuration`);
+    }
+    if (parsed.subject_token_type !== AWS_SUBJECT) {
+      throw new Error(`the parameter ${name} is not a configuration for AWS (subject_token_type ${String(parsed.subject_token_type)})`);
+    }
+    return parsed;
+  })();
+  config = pending;
+  pending.catch(() => {
+    if (config === pending)
+      config = void 0;
+  });
+  return pending;
+}
+async function subjectToken(cfg, region) {
+  const url = (cfg.credential_source?.regional_cred_verification_url ?? DEFAULT_VERIFICATION).replace("{region}", region);
+  const request = await signed(url, "sts", region, {
+    method: "POST",
+    headers: { "x-goog-cloud-target-resource": cfg.audience }
+  });
+  const headers = [{ key: "host", value: new URL(url).host }];
+  request.headers.forEach((value, key) => headers.push({ key, value }));
+  return encodeURIComponent(JSON.stringify({ url, method: "POST", headers }));
+}
+async function failed(res, what) {
+  const body = await res.text().catch(() => "");
+  let reason2 = "";
+  try {
+    const json2 = JSON.parse(body);
+    const error = json2.error;
+    if (typeof error === "string") {
+      reason2 = typeof json2.error_description === "string" ? `${error}: ${json2.error_description}` : error;
+    } else if (error && typeof error === "object") {
+      const e = error;
+      reason2 = `${typeof e.status === "string" ? e.status : `HTTP ${res.status}`}: ${typeof e.message === "string" ? e.message : what}`;
+    }
+  } catch {
+  }
+  throw new Error(reason2 ? `${reason2} (${what})` : `HTTP ${res.status} on ${what}`);
+}
+async function federatedToken(cfg, fetchImpl) {
+  if (federated && federated.until > Date.now())
+    return federated.value;
+  const res = await fetchImpl(cfg.token_url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      audience: cfg.audience,
+      scope: SCOPE,
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      subject_token: await subjectToken(cfg, regionOf()),
+      subject_token_type: cfg.subject_token_type
+    })
+  });
+  if (!res.ok)
+    await failed(res, "the token exchange with Google STS");
+  const body = await res.json().catch(() => ({}));
+  if (typeof body.access_token !== "string" || !body.access_token) {
+    throw new Error("Google STS answered without a token");
+  }
+  const seconds3 = typeof body.expires_in === "number" ? body.expires_in : 300;
+  federated = { value: body.access_token, until: Date.now() + seconds3 * 1e3 - EARLY_MS };
+  return federated.value;
+}
+async function accessToken(fetchImpl = fetch) {
+  if (access && access.until > Date.now())
+    return access.value;
+  const cfg = await configuration(fetchImpl);
+  const token = await federatedToken(cfg, fetchImpl);
+  const url = cfg.service_account_impersonation_url;
+  if (!url)
+    return token;
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ scope: [SCOPE], lifetime: "3600s" })
+  });
+  if (!res.ok)
+    await failed(res, "the access token of the service account");
+  const body = await res.json().catch(() => ({}));
+  if (typeof body.accessToken !== "string" || !body.accessToken) {
+    throw new Error("IAM Credentials answered without an access token");
+  }
+  const expires = typeof body.expireTime === "string" ? Date.parse(body.expireTime) : NaN;
+  access = { value: body.accessToken, until: (Number.isFinite(expires) ? expires : Date.now() + 3e5) - EARLY_MS };
+  return access.value;
+}
+async function identityToken(audience, fetchImpl = fetch) {
+  const cached = identities.get(audience);
+  if (cached && cached.until > Date.now())
+    return cached.value;
+  const cfg = await configuration(fetchImpl);
+  const url = cfg.service_account_impersonation_url;
+  if (!url) {
+    throw new Error("no identity token without a service account: the configuration names none to act as");
+  }
+  const token = await federatedToken(cfg, fetchImpl);
+  const res = await fetchImpl(url.replace(/:generateAccessToken$/, ":generateIdToken"), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ audience, includeEmail: true })
+  });
+  if (!res.ok)
+    await failed(res, `an identity token for ${audience}`);
+  const body = await res.json().catch(() => ({}));
+  if (typeof body.token !== "string" || !body.token) {
+    throw new Error(`IAM Credentials answered without an identity token for ${audience}`);
+  }
+  identities.set(audience, { value: body.token, until: Date.now() + IDENTITY_TTL_MS });
+  return body.token;
+}
+
 // dist/providers/google.js
 var METADATA = "http://metadata.google.internal/computeMetadata/v1";
 var FLAVOR = { "Metadata-Flavor": "Google" };
-var EARLY_MS = 6e4;
-var IDENTITY_TTL_MS = 55 * 6e4;
+var EARLY_MS2 = 6e4;
+var IDENTITY_TTL_MS2 = 55 * 6e4;
 var supplied;
-var access;
-var identities = /* @__PURE__ */ new Map();
+var access2;
+var identities2 = /* @__PURE__ */ new Map();
 async function metadata(path, what, fetchImpl) {
   let res;
   try {
@@ -8417,31 +8574,35 @@ async function metadata(path, what, fetchImpl) {
     await fail2(res, what);
   return res;
 }
-async function accessToken(fetchImpl = fetch) {
+async function accessToken2(fetchImpl = fetch) {
   if (supplied)
     return supplied.accessToken;
-  if (access && access.until > Date.now())
-    return access.value;
+  if (configured())
+    return accessToken(fetchImpl);
+  if (access2 && access2.until > Date.now())
+    return access2.value;
   const res = await metadata("instance/service-accounts/default/token", "the access token", fetchImpl);
   const body = await res.json().catch(() => ({}));
   if (typeof body.access_token !== "string" || !body.access_token) {
     throw new Error("the metadata server answered without an access token");
   }
   const seconds3 = typeof body.expires_in === "number" ? body.expires_in : 300;
-  access = { value: body.access_token, until: Date.now() + seconds3 * 1e3 - EARLY_MS };
-  return access.value;
+  access2 = { value: body.access_token, until: Date.now() + seconds3 * 1e3 - EARLY_MS2 };
+  return access2.value;
 }
-async function identityToken(audience, fetchImpl = fetch) {
+async function identityToken2(audience, fetchImpl = fetch) {
   if (supplied)
     return supplied.identityToken ?? supplied.accessToken;
-  const cached = identities.get(audience);
+  if (configured())
+    return identityToken(audience, fetchImpl);
+  const cached = identities2.get(audience);
   if (cached && cached.until > Date.now())
     return cached.value;
   const res = await metadata(`instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`, `an identity token for ${audience}`, fetchImpl);
   const value = (await res.text()).trim();
   if (!value)
     throw new Error(`the metadata server answered without an identity token for ${audience}`);
-  identities.set(audience, { value, until: Date.now() + IDENTITY_TTL_MS });
+  identities2.set(audience, { value, until: Date.now() + IDENTITY_TTL_MS2 });
   return value;
 }
 async function fail2(res, what) {
@@ -8466,7 +8627,7 @@ async function fail2(res, what) {
   throw new Error(`HTTP ${res.status} on ${what}`);
 }
 async function api(url, init, what, fetchImpl = fetch) {
-  const token = await accessToken(fetchImpl);
+  const token = await accessToken2(fetchImpl);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
   const res = await fetchImpl(url, { ...init, headers });
@@ -8477,7 +8638,7 @@ async function api(url, init, what, fetchImpl = fetch) {
 async function invoke(url, body, what, fetchImpl = fetch) {
   const parsed = new URL(url);
   const audience = parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
-  const token = await identityToken(audience, fetchImpl);
+  const token = await identityToken2(audience, fetchImpl);
   const res = await fetchImpl(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },

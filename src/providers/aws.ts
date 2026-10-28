@@ -254,6 +254,18 @@ export async function presign(url: string, service: string, region: string): Pro
 	return signed.url;
 }
 
+/**
+ * A signed request that is not sent: the signature is handed to someone else, who sends it.
+ *
+ * Google's workload identity federation is the case (`providers/googleFederation.ts`): the
+ * workload signs an STS GetCallerIdentity with its own role, and Google, not the workload, sends
+ * it to AWS to learn who signed. The trace header is left off, since AWS never sees this request
+ * from here.
+ */
+export async function signed(url: string, service: string, region: string, init: RequestInit): Promise<Request> {
+	return signer().sign(url, { ...init, aws: { service, region } });
+}
+
 /** Plain REST: S3, Lambda's invoke path, and anything else addressed by URL rather than by action. */
 export const rest = (
 	url: string,

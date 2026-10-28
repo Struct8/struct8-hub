@@ -14,6 +14,15 @@ AWS account.
 
 ### Added
 
+- A workload on AWS reaches Google Cloud with no Google key: `providers/googleFederation.ts`
+  reads Google's credential configuration from the Systems Manager parameter that
+  `CROSS_CLOUD_PARAMETER` names, exchanges a signed STS `GetCallerIdentity` at Google STS, and
+  takes the access and identity tokens of the service account from IAM Credentials, cached until
+  a minute before they expire. `providers/google.ts` uses it whenever the variable is set and no
+  `credentials()` were supplied. `providers/aws.ts` exports `signed`, which signs a request without
+  sending it. Nothing has run against Google yet.
+- **Contract v1.2**: a workload on AWS reaching Google Cloud (§6.2). It receives
+  `CROSS_CLOUD_PARAMETER`, and on each wire `<TYPE>_ACCOUNT_<LABEL>` with the project id, always.
 - Google Cloud. A Cloud Function (2nd gen) runs the Hub: `runtimes/cloudfunctions.ts` answers the
   Functions Framework's request, and `prebuilt-gcp/` holds the built file with the `package.json`
   the function loads (entry point `handler`). `providers/google.ts` takes the access token, the

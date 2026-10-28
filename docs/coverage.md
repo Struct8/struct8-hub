@@ -356,7 +356,10 @@ label a Google workload's connection carries in the catalog (`GRANT_TARGETS` in 
 
 Every module talks to Google over `fetch` with a bearer token (`providers/google.ts`): an access
 token for the APIs, an identity token for a URL. Inside Google Cloud both come from the metadata
-server; anywhere else, through `credentials()`.
+server. On AWS, with `CROSS_CLOUD_PARAMETER` set, they come from workload identity federation
+(`providers/googleFederation.ts`): the credential configuration in that parameter, a signed STS
+`GetCallerIdentity` exchanged at Google STS, and the service account's tokens from IAM Credentials
+([contract §6.2](../CONTRACT.md)). Anywhere else, through `credentials()`.
 
 | type | call | role the connection needs | |
 |---|---|---|---|

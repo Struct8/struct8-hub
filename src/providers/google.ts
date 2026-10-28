@@ -14,7 +14,13 @@
  * Two tokens, for two kinds of destination. A Google API takes an ACCESS token. A Cloud Run
  * service or a 2nd gen function takes an IDENTITY token, issued for its own URL (the audience),
  * and refuses an access token with 401.
+ *
+ * Outside Google Cloud, a workload on AWS gets both tokens through workload identity federation,
+ * with its own role and no key (`providers/googleFederation.ts`), when the compile gave it
+ * `CROSS_CLOUD_PARAMETER`.
  */
+
+import * as federation from './googleFederation.js';
 
 const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 const FLAVOR = { 'Metadata-Flavor': 'Google' };
@@ -59,6 +65,7 @@ export function resetCredentials(): void {
 	access = undefined;
 	identities.clear();
 	place = undefined;
+	federation.resetFederation();
 }
 
 async function metadata(path: string, what: string, fetchImpl: typeof fetch): Promise<Response> {
@@ -79,6 +86,7 @@ async function metadata(path: string, what: string, fetchImpl: typeof fetch): Pr
 /** The access token of the workload's service account. */
 export async function accessToken(fetchImpl: typeof fetch = fetch): Promise<string> {
 	if (supplied) return supplied.accessToken;
+	if (federation.configured()) return federation.accessToken(fetchImpl);
 	if (access && access.until > Date.now()) return access.value;
 
 	const res = await metadata('instance/service-accounts/default/token', 'the access token', fetchImpl);
@@ -98,6 +106,7 @@ export async function accessToken(fetchImpl: typeof fetch = fetch): Promise<stri
  */
 export async function identityToken(audience: string, fetchImpl: typeof fetch = fetch): Promise<string> {
 	if (supplied) return supplied.identityToken ?? supplied.accessToken;
+	if (federation.configured()) return federation.identityToken(audience, fetchImpl);
 	const cached = identities.get(audience);
 	if (cached && cached.until > Date.now()) return cached.value;
 
