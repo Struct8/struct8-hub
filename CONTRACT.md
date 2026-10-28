@@ -1,6 +1,8 @@
 # Wiring contract
 
-**Version 1** · applies to AWS · English only (this document changes with every contract revision)
+**Version 1.1** · applies to AWS and Google Cloud · English only (this document changes with every contract revision)
+
+Version 1.1 adds Google Cloud (§6.1, §7) and changes nothing an AWS consumer reads.
 
 This is the agreement between the generator that emits infrastructure and the workload that runs
 inside it. The generator turns each wire in the diagram into one or more environment variables;
@@ -143,11 +145,28 @@ AWS publishes the account id in no environment variable of its own. On the commo
 variable is absent, and any consumer that composes an SQS URL or an SNS ARN from it will produce
 `.../None/queue-name` and fail every send. Recover it from the invocation's own ARN instead.
 
+### 6.1 On Google Cloud
+
+A Google workload receives `NAME`, `CICD_STAGE` and `CICD_VERSION`, and **never `REGION` or
+`ACCOUNT`**: the generator writes those two from `data.aws_*`, which does not exist in a Google
+state. Read the project id and the region from the metadata server
+(`computeMetadata/v1/project/project-id` and `computeMetadata/v1/instance/region`), which answers
+on every Cloud Function, Cloud Run service and Compute Engine VM.
+
+On a wire, `ACCOUNT` carries the **project id**: the project box of the catalog declares its
+`project_id` as the account field. As on AWS, it is absent when the target is in the workload's
+own project. As of v1.1 the generator does not compare projects, so it never emits it; a
+consumer must still read it when present.
+
+A Cloud Run service and a 2nd gen function carry `URL`, their HTTPS address, as a Terraform
+reference. A target in another state has no `URL`.
+
 ## 7. What the generator emits, and what it does not
 
 Variables are emitted for a workload when its resource type is marked as an environment-variable
-consumer. As of contract v1 that is `aws_lambda_function`, `aws_instance`,
-`aws_ecs_task_definition` and `aws_launch_template`.
+consumer. As of contract v1.1 that is `aws_lambda_function`, `aws_instance`,
+`aws_ecs_task_definition`, `aws_launch_template` and, on Google Cloud,
+`google_cloudfunctions2_function`, whose variables land in `service_config.environment_variables`.
 
 Only **outgoing** wires produce variables — those leaving the workload's node.
 

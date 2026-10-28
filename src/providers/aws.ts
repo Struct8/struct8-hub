@@ -282,25 +282,8 @@ export async function plain(
 	return res;
 }
 
-/**
- * Base64 for the JSON protocols that carry binary — Kinesis and Firehose both take `Data` that
- * way. Encoding through TextEncoder rather than handing `btoa` a string directly: `btoa` throws on
- * any character above U+00FF, so a message with an accent in it would fail and a plain one would
- * not, which is a bug that only shows up in production and only for some users.
- */
-export const b64 = (text: string): string => {
-	const bytes = new TextEncoder().encode(text);
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary);
-};
-
-/** The inverse, for reading records off a stream. */
-export const unb64 = (encoded: string): string => {
-	const binary = atob(encoded);
-	const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-	return new TextDecoder().decode(bytes);
-};
+/** Base64 for the JSON protocols that carry binary — Kinesis and Firehose both take `Data` that way. */
+export { b64, unb64 } from './base64.js';
 
 // ---------------------------------------------------------------------------
 // X-Ray

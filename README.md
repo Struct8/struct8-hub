@@ -29,12 +29,14 @@ against a live account. Nothing here has been applied from a diagram.
 
 | piece | state |
 |---|---|
-| [Wiring contract](CONTRACT.md) v1 | documented, matches what the generator emits today |
-| Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (391 in the suite) |
+| [Wiring contract](CONTRACT.md) v1.1 | documented, matches what the generator emits today |
+| Core (`discovery`, `envelope`, `registry`, `report`) | done, 28 tests (458 in the suite) |
 | AWS resources | done: 24 modules, 20 send targets, 12 event sources ([coverage](docs/coverage.md)) |
 | AWS Lambda runtime | done, invoked end to end against a live account |
-| Deployable bundle | done: `node scripts/bundle.mjs` produces a 293 KiB zip |
+| Deployable bundle | done: `node scripts/bundle.mjs` produces a zip of about 300 KiB |
 | Container runtime (ECS) | done: HTTP in, task-role credentials, SQS consumption behind `HUB_POLL` ([why a variable](CONTRACT.md#known-gaps)) |
+| Google Cloud resources | written, never run against Google: 6 modules, 6 send targets, 1 event source ([coverage](docs/coverage.md#google-cloud)) |
+| Cloud Functions (2nd gen) runtime | written, never deployed: [`prebuilt-gcp/`](prebuilt-gcp/README.md), token and project from the metadata server |
 | Cloudflare Workers runtime | planned |
 
 **A built file is in the repository: [`prebuilt/index.mjs`](prebuilt/index.mjs)** — one file,

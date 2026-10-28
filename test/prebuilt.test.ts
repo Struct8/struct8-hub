@@ -94,3 +94,38 @@ test('the Dockerfile copies what the repository actually carries', () => {
 		assert.ok(existsSync(join('image', String(path))), `Dockerfile copies ${path}, which is not in image/`);
 	}
 });
+
+test('prebuilt-gcp/index.mjs matches a fresh build of the source', () => {
+	const scratch = mkdtempSync(join(tmpdir(), 'hub-gcp-'));
+	try {
+		const fresh = join(scratch, 'index.mjs');
+
+		execFileSync(
+			process.execPath,
+			['scripts/bundle.mjs', '--runtime', 'cloudfunctions', '--raw', '--out', fresh],
+			{ stdio: 'pipe' }
+		);
+
+		assert.equal(
+			readFileSync('prebuilt-gcp/index.mjs', 'utf8'),
+			readFileSync(fresh, 'utf8'),
+			'prebuilt-gcp/index.mjs is stale — run `npm run prebuilt:gcp` and commit the result'
+		);
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
+});
+
+test('the Cloud Functions artifact exports the handler its package names', () => {
+	const code = readFileSync('prebuilt-gcp/index.mjs', 'utf8');
+	assert.match(code, /export\s*\{[^}]*handler/, 'no handler exported');
+
+	// The Functions Framework loads the package's `main`. Without it, it looks for `index.js`,
+	// which is not in the folder, and the function never starts.
+	const pkg = JSON.parse(readFileSync('prebuilt-gcp/package.json', 'utf8')) as { main?: string };
+	assert.equal(pkg.main, 'index.mjs');
+
+	const imports = [...code.matchAll(/^import\s.*?from\s*["']([^"']+)["']/gm)].map((m) => m[1]);
+	const external = imports.filter((spec) => spec !== undefined && !spec.startsWith('node:'));
+	assert.deepEqual(external, [], `bundle depends on ${external.join(', ')}`);
+});

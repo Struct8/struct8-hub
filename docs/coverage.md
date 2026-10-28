@@ -347,6 +347,44 @@ Two more are the wire itself rather than a destination, and are covered by the r
 far side: `aws_s3_bucket_notification` and `aws_lambda_event_source_mapping`.
 `aws_sqs_queue_dlq` is a queue and is covered by the queue.
 
+## Google Cloud
+
+Written on 2026-10-28 and **never run against Google**: the suite proves the requests over a fake
+transport, as it did for AWS before the live account. The candidates are the targets of the grant
+label a Google workload's connection carries in the catalog (`GRANT_TARGETS` in CloudMan's
+`src/lib/resources/google/const/iam_grant_roles.js`), plus Firestore.
+
+Every module talks to Google over `fetch` with a bearer token (`providers/google.ts`): an access
+token for the APIs, an identity token for a URL. Inside Google Cloud both come from the metadata
+server; anywhere else, through `credentials()`.
+
+| type | call | role the connection needs | |
+|---|---|---|---|
+| `google_pubsub_topic` | `topics.publish` | Pub/Sub Publisher, the label's default | ✓ |
+| `google_storage_bucket` | JSON API simple upload, `<workload>/<time>.json` | Storage Object User, the default | ✓ |
+| `google_secret_manager_secret` | `secrets.addVersion` | **Secret Version Adder**: the default, Secret Accessor, only reads | ✓ |
+| `google_firestore_database` | `documents.createDocument` in `hub_messages` | Cloud Datastore User — **the catalog cannot draw this connection yet** | ✓ |
+| `google_cloudfunctions2_function` | `POST` to `URL`, identity token | Cloud Run Invoker, the default | ✓ |
+| `google_cloud_run_v2_service` | `POST` to `URL`, identity token | Cloud Run Invoker, the default | ✓ |
+
+**Receive.** `google_pubsub_topic` reads what a push subscription POSTs, which is also what an
+Eventarc trigger on a topic delivers over HTTP. The message id is the item id, and a failed hop
+answers 500 so that Pub/Sub delivers the message again: Pub/Sub has no partial-batch report.
+
+**Blocked on a decision.**
+
+| type | why |
+|---|---|
+| `google_bigquery_table`, `google_bigquery_dataset` | a row has to match the table's schema, and nothing on the wire says what it is. Writing to a `hub_messages` table the Hub creates, as the SQL databases do, is the likely answer |
+| `google_bigtable_instance` | a write names a column family, which the table must already have |
+| `google_spanner_database`, `google_spanner_instance` | a write names a table and its columns |
+| `google_cloud_tasks_queue` | a task needs an HTTP target, and the queue does not have one unless it was configured with `http_target` |
+| `google_pubsub_subscription` | a destination is a topic; a subscription is read, which is consumption for a runtime with no push |
+| `google_sql_database_instance` | the Postgres driver is here; the connection, the login by IAM and the certificate of Cloud SQL are not |
+
+**Not applicable.** `google_kms_crypto_key` and `google_artifact_registry_repository` hold no
+message.
+
 ## What the predecessor claimed and did not do
 
 `LambdaHub2.py` lists sixteen types in its parser vocabulary. Three have no send block and no

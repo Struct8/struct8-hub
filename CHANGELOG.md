@@ -14,6 +14,19 @@ AWS account.
 
 ### Added
 
+- Google Cloud. A Cloud Function (2nd gen) runs the Hub: `runtimes/cloudfunctions.ts` answers the
+  Functions Framework's request, and `prebuilt-gcp/` holds the built file with the `package.json`
+  the function loads (entry point `handler`). `providers/google.ts` takes the access token, the
+  identity token, the project and the region from the metadata server, or from `credentials()`
+  outside Google Cloud. Six modules send: `google_pubsub_topic`, `google_storage_bucket`,
+  `google_secret_manager_secret`, `google_firestore_database`, `google_cloudfunctions2_function`
+  and `google_cloud_run_v2_service`; the topic also reads a push delivery, and a failed hop
+  answers 500 so Pub/Sub delivers the message again. Nothing has run against Google yet. The
+  modules are bundled in the Lambda and container files too, where they need `credentials()`.
+  `b64` and `unb64` moved to `providers/base64.ts`; `providers/aws.ts` re-exports them.
+- **Contract v1.1**: Google Cloud (§6.1, §7). A Google workload receives `NAME` and no `REGION`
+  or `ACCOUNT`; on a wire, `ACCOUNT` is the project id; a function and a Cloud Run service carry
+  `URL`. Nothing an AWS consumer reads changes.
 - Failures on request, for the lessons about retries and dead-letter queues. With `HUB_FAULTS` on, a
   Lambda fails a message whose JSON has `behavior` set to `fail`, `fail-times:N` or `slow`. It is off
   by default and absent from the container runtime. Only the message that asks fails: a queue gets

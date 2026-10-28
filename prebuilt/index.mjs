@@ -5996,6 +5996,20 @@ function guessServiceRegion(url, headers) {
   return [HOST_SERVICES[service] || service, region || ""];
 }
 
+// dist/providers/base64.js
+var b64 = (text2) => {
+  const bytes = new TextEncoder().encode(text2);
+  let binary = "";
+  for (const byte of bytes)
+    binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
+var unb64 = (encoded) => {
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
+
 // dist/providers/aws.js
 var client;
 function signer() {
@@ -6096,18 +6110,6 @@ async function plain(url, init, what, fetchImpl = fetch) {
     throw new Error(`HTTP ${res.status} on ${what}`);
   return res;
 }
-var b64 = (text2) => {
-  const bytes = new TextEncoder().encode(text2);
-  let binary = "";
-  for (const byte of bytes)
-    binary += String.fromCharCode(byte);
-  return btoa(binary);
-};
-var unb64 = (encoded) => {
-  const binary = atob(encoded);
-  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-};
 var SEGMENT_BATCH = 50;
 async function putTraceSegments(region, documents, fetchImpl = fetch) {
   const unprocessed = [];
@@ -8393,6 +8395,275 @@ register({
     if (!region)
       throw new Error("no region for the parameter and none for the workload");
     await json("ssm", region, "AmazonSSM.PutParameter", { Name: name, Value: seal(envelope), Overwrite: true }, ctx.fetch);
+  }
+});
+
+// dist/providers/google.js
+var METADATA = "http://metadata.google.internal/computeMetadata/v1";
+var FLAVOR = { "Metadata-Flavor": "Google" };
+var EARLY_MS = 6e4;
+var IDENTITY_TTL_MS = 55 * 6e4;
+var supplied;
+var access;
+var identities = /* @__PURE__ */ new Map();
+async function metadata(path, what, fetchImpl) {
+  let res;
+  try {
+    res = await fetchImpl(`${METADATA}/${path}`, { headers: FLAVOR });
+  } catch (err) {
+    throw new Error(`no Google credentials: the metadata server did not answer ${what} (${err instanceof Error ? err.message : String(err)}), and none were supplied through credentials()`);
+  }
+  if (!res.ok)
+    await fail2(res, what);
+  return res;
+}
+async function accessToken(fetchImpl = fetch) {
+  if (supplied)
+    return supplied.accessToken;
+  if (access && access.until > Date.now())
+    return access.value;
+  const res = await metadata("instance/service-accounts/default/token", "the access token", fetchImpl);
+  const body = await res.json().catch(() => ({}));
+  if (typeof body.access_token !== "string" || !body.access_token) {
+    throw new Error("the metadata server answered without an access token");
+  }
+  const seconds3 = typeof body.expires_in === "number" ? body.expires_in : 300;
+  access = { value: body.access_token, until: Date.now() + seconds3 * 1e3 - EARLY_MS };
+  return access.value;
+}
+async function identityToken(audience, fetchImpl = fetch) {
+  if (supplied)
+    return supplied.identityToken ?? supplied.accessToken;
+  const cached = identities.get(audience);
+  if (cached && cached.until > Date.now())
+    return cached.value;
+  const res = await metadata(`instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`, `an identity token for ${audience}`, fetchImpl);
+  const value = (await res.text()).trim();
+  if (!value)
+    throw new Error(`the metadata server answered without an identity token for ${audience}`);
+  identities.set(audience, { value, until: Date.now() + IDENTITY_TTL_MS });
+  return value;
+}
+async function fail2(res, what) {
+  const body = await res.text().catch(() => "");
+  if (body.startsWith("{")) {
+    try {
+      const json2 = JSON.parse(body);
+      const error = json2.error;
+      if (error && typeof error === "object") {
+        const status = typeof error.status === "string" && error.status ? error.status : `HTTP ${res.status}`;
+        const message = typeof error.message === "string" && error.message ? error.message : what;
+        throw new Error(`${status}: ${message}`);
+      }
+      if (typeof json2.message === "string" && json2.message) {
+        throw new Error(`HTTP ${res.status} on ${what}: ${json2.message}`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes(":"))
+        throw err;
+    }
+  }
+  throw new Error(`HTTP ${res.status} on ${what}`);
+}
+async function api(url, init, what, fetchImpl = fetch) {
+  const token = await accessToken(fetchImpl);
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  const res = await fetchImpl(url, { ...init, headers });
+  if (!res.ok)
+    await fail2(res, what);
+  return res;
+}
+async function invoke(url, body, what, fetchImpl = fetch) {
+  const parsed = new URL(url);
+  const audience = parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
+  const token = await identityToken(audience, fetchImpl);
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body
+  });
+  if (!res.ok)
+    await fail2(res, what);
+  return res;
+}
+function projectOf(project, kind) {
+  if (!project) {
+    throw new Error(`no project for the ${kind}: none on the wire and none from the metadata server`);
+  }
+  return project;
+}
+
+// dist/resources/google_cloudfunctions2_function/index.js
+register({
+  type: "google_cloudfunctions2_function",
+  capabilities: ["function"],
+  /**
+   * A POST of the sealed envelope to the function's URL, with an identity token for it. The
+   * connection's grant label gives the caller Cloud Run Invoker on the function's service, which
+   * is what Google checks. A Hub on the other side reads the envelope and continues the chain.
+   */
+  async send(n, envelope, ctx) {
+    const url = n.props["URL"];
+    if (!url) {
+      throw new Error("no function URL on the wire: the function is in another state, or the compile did not export it");
+    }
+    await invoke(url, seal(envelope), `invoke ${n.props["NAME"] ?? url}`, ctx.fetch);
+  }
+});
+
+// dist/resources/google_cloud_run_v2_service/index.js
+register({
+  type: "google_cloud_run_v2_service",
+  capabilities: ["http"],
+  /**
+   * A POST of the sealed envelope to the service's URL, with an identity token for it. The
+   * connection's grant label gives the caller Cloud Run Invoker on the service. A public service
+   * accepts the token as well, so one sender serves both.
+   */
+  async send(n, envelope, ctx) {
+    const url = n.props["URL"];
+    if (!url) {
+      throw new Error("no service URL on the wire: the service is in another state, or the compile did not export it");
+    }
+    await invoke(url, seal(envelope), `POST ${n.props["NAME"] ?? url}`, ctx.fetch);
+  }
+});
+
+// dist/resources/google_firestore_database/index.js
+var COLLECTION2 = "hub_messages";
+register({
+  type: "google_firestore_database",
+  capabilities: ["table"],
+  /**
+   * One document of `hub_messages` per message, with the fields of the database row
+   * (`providers/record.ts`) plus `stored_at`. The document id is the record's id, the hash of
+   * what identifies a message, so a redelivery is stored once: Firestore answers ALREADY_EXISTS,
+   * which counts as stored.
+   * https://docs.cloud.google.com/firestore/docs/reference/rest/v1/projects.databases.documents/createDocument
+   */
+  async send(n, envelope, ctx) {
+    const database = n.props["NAME"];
+    if (!database)
+      throw new Error("no database name on the wire");
+    const project = projectOf(ctx.account(n), "database");
+    const record = await recordOf(envelope, ctx);
+    const fields = {
+      trace: { stringValue: record.trace },
+      path: { stringValue: record.path },
+      receiver: { stringValue: record.receiver },
+      digest: { stringValue: record.digest },
+      hops: { integerValue: String(record.hops) },
+      sent_at: { stringValue: record.sentAt },
+      body: { stringValue: record.body },
+      stored_at: { timestampValue: ctx.now().toISOString() }
+    };
+    try {
+      await api(`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project)}/databases/${encodeURIComponent(database)}/documents/${COLLECTION2}?documentId=${record.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fields }) }, "datastore.entities.create", ctx.fetch);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("ALREADY_EXISTS"))
+        return;
+      throw err;
+    }
+  }
+});
+
+// dist/resources/google_pubsub_topic/index.js
+function topicPath(n, ctx) {
+  const name = n.props["NAME"];
+  if (!name)
+    throw new Error("no topic name on the wire");
+  if (name.startsWith("projects/"))
+    return name;
+  return `projects/${projectOf(ctx.account(n), "topic")}/topics/${name}`;
+}
+register({
+  type: "google_pubsub_topic",
+  capabilities: ["topic"],
+  async send(n, envelope, ctx) {
+    const path = topicPath(n, ctx);
+    const res = await api(`https://pubsub.googleapis.com/v1/${path}:publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [{ data: b64(seal(envelope)) }] })
+    }, "pubsub.topics.publish", ctx.fetch);
+    const answer = await res.json().catch(() => null);
+    if (answer && Array.isArray(answer.messageIds) && answer.messageIds.length === 0) {
+      throw new Error(`Pub/Sub accepted the request to ${path} and published nothing`);
+    }
+  },
+  receive(raw) {
+    const body = raw;
+    const message = body?.message;
+    if (!message || typeof message !== "object" || typeof body?.subscription !== "string")
+      return null;
+    const id = message.messageId ?? message.message_id;
+    let text2 = "";
+    try {
+      text2 = message.data ? unb64(message.data) : "";
+    } catch {
+      text2 = `message ${id ?? "?"} (data is not base64)`;
+    }
+    const attempt = Number(body.deliveryAttempt);
+    const subscription = body.subscription.split("/").pop() ?? body.subscription;
+    return {
+      origin: "gcp:pubsub",
+      describe: `Pub/Sub ${subscription} (1 message)`,
+      items: [
+        {
+          // The id is what lets a failed hop fail the request, so Pub/Sub delivers the
+          // message again (runtimes/cloudfunctions.ts).
+          ...id === void 0 ? {} : { id },
+          body: text2,
+          ...Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}
+        }
+      ]
+    };
+  }
+});
+
+// dist/resources/google_secret_manager_secret/index.js
+register({
+  type: "google_secret_manager_secret",
+  capabilities: ["secret"],
+  /**
+   * Adds a version holding the message, as the AWS module puts a value into a Secrets Manager
+   * secret: a reader of the latest version reads the last message. The value is never logged and
+   * never put in the report.
+   *
+   * The connection's grant label is born with Secret Accessor, which reads. Adding a version
+   * needs Secret Version Adder (`secretmanager.versions.add`) on the label; without it the hop
+   * fails with PERMISSION_DENIED, naming that permission.
+   */
+  async send(n, envelope, ctx) {
+    const name = n.props["NAME"];
+    if (!name)
+      throw new Error("no secret id on the wire");
+    const path = name.startsWith("projects/") ? name : `projects/${projectOf(ctx.account(n), "secret")}/secrets/${name}`;
+    await api(`https://secretmanager.googleapis.com/v1/${path}:addVersion`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ payload: { data: b64(seal(envelope)) } })
+    }, "secretmanager.versions.add", ctx.fetch);
+  }
+});
+
+// dist/resources/google_storage_bucket/index.js
+var stamp2 = () => (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+register({
+  type: "google_storage_bucket",
+  capabilities: ["object-store"],
+  /**
+   * One object per message, named as on S3 (`<workload>/<time>.json`), so the two buckets can be
+   * read the same way. The simple upload of the JSON API: the body is the object.
+   * https://docs.cloud.google.com/storage/docs/uploading-objects#uploading-an-object
+   */
+  async send(n, envelope, ctx) {
+    const bucket = n.props["BUCKET"] ?? n.props["NAME"];
+    if (!bucket)
+      throw new Error("no bucket name on the wire");
+    const name = `${ctx.self}/${stamp2()}.json`;
+    await api(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(name)}`, { method: "POST", headers: { "content-type": "application/json" }, body: seal(envelope) }, "storage.objects.create", ctx.fetch);
   }
 });
 

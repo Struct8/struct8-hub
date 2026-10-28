@@ -13,6 +13,7 @@ import '../dist/resources/index.js';
 import * as registry from '../dist/core/registry.js';
 import { normalize } from '../dist/core/hub.js';
 import { open } from '../dist/core/envelope.js';
+import * as google from '../dist/providers/google.js';
 import * as mongo from '../dist/providers/mongo.js';
 import * as sql from '../dist/providers/sql.js';
 import type { Capability, Ctx, Neighbor } from '../dist/core/types.js';
@@ -80,6 +81,9 @@ const ENVELOPE = open('payload', 'Fn', { trace: 'T', at: '2026-08-16T12:00:00.00
 // Credentials so signing has something to work with. The fake fetch never leaves the process.
 process.env['AWS_ACCESS_KEY_ID'] ??= 'AKIAIOSFODNN7EXAMPLE';
 process.env['AWS_SECRET_ACCESS_KEY'] ??= 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+// The same for Google: without it a sender asks the metadata server, which exists only inside
+// Google Cloud.
+google.credentials({ accessToken: 'ya29.test', identityToken: 'eyJ.test' });
 
 // A database is reached over TCP, not through `fetch`, so the fake `fetch` above cannot stand in
 // for it. The suite hands the Postgres family a driver that accepts and does nothing, which keeps

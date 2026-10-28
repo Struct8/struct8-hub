@@ -1,0 +1,9 @@
+{
+	"name": "struct8-hub-cloud-function",
+	"private": true,
+	"type": "module",
+	"main": "index.mjs",
+	"engines": {
+		"node": ">=20"
+	}
+}

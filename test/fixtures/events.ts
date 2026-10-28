@@ -32,6 +32,17 @@ export const EVENTS: Record<string, unknown> = {
 		],
 	},
 
+	// What a push subscription POSTs, and what an Eventarc trigger on a topic delivers over HTTP.
+	// `data` is "hello from the topic" in base64.
+	'gcp:pubsub': {
+		message: {
+			data: 'aGVsbG8gZnJvbSB0aGUgdG9waWM=',
+			messageId: '2070443601311540',
+			publishTime: '2026-10-28T12:00:00.000Z',
+		},
+		subscription: 'projects/my-project/subscriptions/orders-push',
+	},
+
 	// Key deliberately not a text extension: the S3 receiver fetches the object only for text, and
 	// a fixture must never reach the network.
 	'aws:s3': {
