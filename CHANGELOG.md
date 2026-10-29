@@ -14,6 +14,11 @@ AWS account.
 
 ### Added
 
+- A workload writes to a BigQuery dataset: `resources/google_bigquery_dataset` creates
+  `hub_messages` in the dataset the first time (the columns of every other `hub_messages`, plus
+  `stored_at`) and stores each message with a `MERGE` on its id through `jobs.query`, so a
+  redelivery is stored once. A DML statement rather than streaming, which can drop rows sent to a
+  table created moments before. Until now the connection was ignored without a word in the report.
 - One trace across AWS and Google Cloud. `core/envelope.ts` converts between the X-Ray root and
   the W3C trace id and reads and writes `traceparent`. A request to a function or a Cloud Run
   service carries the `traceparent` header, and a Pub/Sub message the `googclient_traceparent`

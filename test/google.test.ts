@@ -166,6 +166,46 @@ test('a Firestore database keeps one document per message, and a redelivery coun
 	assert.equal(fields['hops']!['integerValue'], String(ENVELOPE.hops));
 });
 
+test('a BigQuery dataset gets hub_messages once, and each message is a MERGE on its id', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle((s) =>
+		s.url.endsWith('/tables')
+			? Response.json({ error: { code: 409, status: 'ALREADY_EXISTS', message: 'Already Exists: Table' } }, { status: 409 })
+			: Response.json({ jobComplete: true, numDmlAffectedRows: '1' })
+	);
+	const dataset = neighbor('google_bigquery_dataset', { NAME: 'events_ds' });
+	await send('google_bigquery_dataset')(dataset, ENVELOPE, ctxWith(g.fetchImpl));
+	await send('google_bigquery_dataset')(dataset, ENVELOPE, ctxWith(g.fetchImpl));
+
+	const [create, first, second] = g.calls();
+	assert.equal(g.calls().length, 3, 'the table is asked for once per dataset');
+	assert.equal(create!.url, 'https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets/events_ds/tables');
+	assert.equal((JSON.parse(create!.body) as { tableReference: { tableId: string } }).tableReference.tableId, 'hub_messages');
+	assert.equal(first!.url, 'https://bigquery.googleapis.com/bigquery/v2/projects/my-project/queries');
+	const job = JSON.parse(first!.body) as { query: string; queryParameters: { name: string; parameterValue: { value: string } }[] };
+	assert.match(job.query, /^MERGE `my-project\.events_ds\.hub_messages` t USING \(SELECT @id AS id\) s ON t\.id = s\.id /);
+	const value = (name: string) => job.queryParameters.find((p) => p.name === name)?.parameterValue.value;
+	assert.equal(value('body'), 'payload');
+	assert.match(value('id') ?? '', /^[0-9a-f]{64}$/);
+	assert.equal(second!.body, first!.body, 'a redelivery sends the same id');
+});
+
+test('a BigQuery insert that has not finished is not counted as stored, and an unquotable id sends nothing', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle((s) =>
+		s.url.endsWith('/tables') ? Response.json({}) : Response.json({ jobComplete: false, jobReference: { jobId: 'job_1' } })
+	);
+	await assert.rejects(
+		send('google_bigquery_dataset')(neighbor('google_bigquery_dataset', { NAME: 'slow_ds' }), ENVELOPE, ctxWith(g.fetchImpl)),
+		/had not finished after 20 s \(job job_1\)/
+	);
+	await assert.rejects(
+		send('google_bigquery_dataset')(neighbor('google_bigquery_dataset', { NAME: 'x`; DROP' }), ENVELOPE, ctxWith(g.fetchImpl)),
+		/is not a BigQuery dataset id/
+	);
+	assert.equal(g.calls().length, 2);
+});
+
 test('a function and a Cloud Run service are called with an identity token for their URL', async () => {
 	google.resetCredentials();
 	const g = fakeGoogle();

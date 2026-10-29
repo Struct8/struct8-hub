@@ -28,6 +28,7 @@ import './aws_secretsmanager_secret/index.js';
 import './aws_sns_topic/index.js';
 import './aws_sqs_queue/index.js';
 import './aws_ssm_parameter/index.js';
+import './google_bigquery_dataset/index.js';
 import './google_cloud_run_v2_service/index.js';
 import './google_cloudfunctions2_function/index.js';
 import './google_firestore_database/index.js';
@@ -36,4 +37,4 @@ import './google_secret_manager_secret/index.js';
 import './google_storage_bucket/index.js';
 
 /** Every resource type this build knows about, in registration order. */
-export const BUNDLED: readonly string[] = [ "aws_api_gateway_rest_api", "aws_appsync_graphql_api", "aws_cloudfront_distribution", "aws_cloudwatch_event_bus", "aws_cloudwatch_event_rule", "aws_cloudwatch_log_group", "aws_cognito_user_pool", "aws_db_instance", "aws_db_proxy", "aws_docdb_cluster", "aws_dynamodb_table", "aws_kinesis_firehose_delivery_stream", "aws_kinesis_stream", "aws_kinesis_video_stream", "aws_lambda_function", "aws_lambda_function_url", "aws_lb", "aws_opensearch_domain", "aws_rds_cluster", "aws_s3_bucket", "aws_secretsmanager_secret", "aws_sns_topic", "aws_sqs_queue", "aws_ssm_parameter", "google_cloud_run_v2_service", "google_cloudfunctions2_function", "google_firestore_database", "google_pubsub_topic", "google_secret_manager_secret", "google_storage_bucket" ];
+export const BUNDLED: readonly string[] = [ "aws_api_gateway_rest_api", "aws_appsync_graphql_api", "aws_cloudfront_distribution", "aws_cloudwatch_event_bus", "aws_cloudwatch_event_rule", "aws_cloudwatch_log_group", "aws_cognito_user_pool", "aws_db_instance", "aws_db_proxy", "aws_docdb_cluster", "aws_dynamodb_table", "aws_kinesis_firehose_delivery_stream", "aws_kinesis_stream", "aws_kinesis_video_stream", "aws_lambda_function", "aws_lambda_function_url", "aws_lb", "aws_opensearch_domain", "aws_rds_cluster", "aws_s3_bucket", "aws_secretsmanager_secret", "aws_sns_topic", "aws_sqs_queue", "aws_ssm_parameter", "google_bigquery_dataset", "google_cloud_run_v2_service", "google_cloudfunctions2_function", "google_firestore_database", "google_pubsub_topic", "google_secret_manager_secret", "google_storage_bucket" ];

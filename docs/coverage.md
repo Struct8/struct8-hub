@@ -372,8 +372,14 @@ them later continues a trace.
 | `google_storage_bucket` | JSON API simple upload, `<workload>/<time>.json` | Storage Object User, the default | ✓ |
 | `google_secret_manager_secret` | `secrets.addVersion` | **Secret Version Adder**: the default, Secret Accessor, only reads | ✓ |
 | `google_firestore_database` | `documents.createDocument` in `hub_messages` | Cloud Datastore User — **the catalog cannot draw this connection yet** | ✓ |
+| `google_bigquery_dataset` | `tables.insert` of `hub_messages` once, then a `MERGE` on the id through `jobs.query` | BigQuery Data Editor on the dataset and BigQuery Job User on the project, both from the connection | ✓ |
 | `google_cloudfunctions2_function` | `POST` to `URL`, identity token | Cloud Run Invoker, the default | ✓ |
 | `google_cloud_run_v2_service` | `POST` to `URL`, identity token | Cloud Run Invoker, the default | ✓ |
+
+Until 2026-10-29 a connection to a BigQuery dataset reached the function as
+`GOOGLE_BIGQUERY_DATASET_NAME_0` and was ignored: no module registered the type, so the variable
+did not parse and the report listed nothing as dropped. The table the diagram draws in the dataset
+stays empty; the messages go to `hub_messages`, as in every other database.
 
 **Receive.** `google_pubsub_topic` reads what a push subscription POSTs, which is also what an
 Eventarc trigger on a topic delivers over HTTP. The message id is the item id, and a failed hop
