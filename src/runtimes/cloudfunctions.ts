@@ -15,11 +15,16 @@
  *
  * The function's `build_config.entry_point` is `handler`.
  *
- * A function with an `event_trigger` is not called the way an HTTP function is. Eventarc deploys it
- * with the `cloudevent` signature, and the Functions Framework then calls
- * `handler(cloudEvent, callback)`: the same two arguments, with other things in them. The handler
- * tells the two apart by the second one (`completes`), because the entry point is the same name in
- * both. See `wrapCloudEventFunctionWithCallback` in the framework's src/function_wrappers.ts.
+ * A function with an `event_trigger` is not called the way an HTTP function is, and the entry point
+ * is the same name in every case, so the handler tells the signatures apart by its second argument
+ * (src/function_wrappers.ts of the Functions Framework):
+ *
+ *   http         (request, response)    an object with `status`.
+ *   event        (data, context)        a plain object. Measured on a function with a trigger on
+ *                                       a topic, 2026-11-05: the framework converts the CloudEvent,
+ *                                       and the first argument is the message itself.
+ *   cloudevent   (cloudEvent, callback) a function. The framework takes it for this handler
+ *                                       because the handler declares two parameters.
  */
 
 import { discover } from '../core/discovery.js';
@@ -62,8 +67,25 @@ export interface CloudEvent {
  */
 export type CloudEventCallback = (err: Error | null, result?: string) => void;
 
-/** Whether the framework called the `cloudevent` signature: there, the second argument is a function. */
-const completes = (res: HttpResponse | CloudEventCallback): res is CloudEventCallback => typeof res === 'function';
+/**
+ * The second argument under the `event` signature. A value the handler returns is the body of a
+ * 200, and an error it throws makes the framework answer 500.
+ */
+export interface EventContext {
+	/** The Pub/Sub message id: the framework removes `messageId` from the message. */
+	readonly eventId?: string;
+	readonly eventType?: string;
+	readonly resource?: string | { readonly name?: string };
+}
+
+/** The event type the framework gives a message published to a topic. */
+const TOPIC_PUBLISH = 'google.pubsub.topic.publish';
+
+/** Whether the framework called the `cloudevent` signature. */
+const completes = (res: unknown): res is CloudEventCallback => typeof res === 'function';
+
+/** Whether the framework called the `http` signature. */
+const answersHttp = (res: unknown): res is HttpResponse => typeof (res as HttpResponse | null)?.status === 'function';
 
 /**
  * Sources that redeliver a message the function answered with an error. A failed hop has to fail
@@ -85,6 +107,27 @@ function eventOf(req: HttpRequest): unknown {
 		return req.rawBody?.toString('utf8') ?? String(body);
 	}
 	return body;
+}
+
+/**
+ * What arrived under the `event` signature. A message goes back to the shape of a push body, which
+ * is what the topic's receiver reads. The topic stands in for the subscription, which the framework
+ * does not pass on: the receiver only names it in the report.
+ */
+function eventOfContext(data: unknown, context: EventContext): unknown {
+	if (context.eventType !== TOPIC_PUBLISH) return data;
+	const resource = context.resource;
+	return {
+		message: { ...(data as object), messageId: context.eventId },
+		subscription: (typeof resource === 'string' ? resource : resource?.name) ?? 'topic',
+	};
+}
+
+/** What arrived, under whichever signature the framework called. */
+function delivered(first: unknown, second: unknown): unknown {
+	if (completes(second)) return (first as CloudEvent).data;
+	if (answersHttp(second)) return eventOf(first as HttpRequest);
+	return eventOfContext(first, second as EventContext);
 }
 
 /**
@@ -143,9 +186,9 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 	let neighbors: readonly Neighbor[] | undefined;
 
 	return async function handler(
-		req: HttpRequest | CloudEvent,
-		res: HttpResponse | CloudEventCallback
-	): Promise<void> {
+		req: unknown,
+		res: HttpResponse | CloudEventCallback | EventContext
+	): Promise<string | void> {
 		// Resolved on first request rather than at module load, so that a shim which registers
 		// resources after calling cloudfunctions() still sees a complete vocabulary.
 		neighbors ??= discover(typeof process === 'undefined' ? {} : process.env, registry.vocabulary());
@@ -155,7 +198,7 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 		const self = env('NAME') ?? env('K_SERVICE') ?? 'hub';
 		const here = await google.whereAmI(globalThis.fetch);
 
-		const arrival = await normalize(completes(res) ? (req as CloudEvent).data : eventOf(req as HttpRequest));
+		const arrival = await normalize(delivered(req, res));
 		const trace = traceOf(req as HttpRequest, arrival);
 
 		const ctx: Ctx = {
@@ -206,6 +249,11 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 			res(failed ? new Error(`the Hub failed this message: ${body}`) : null, failed ? undefined : body);
 			return;
 		}
-		res.status(failed ? 500 : 200).set('content-type', 'application/json').send(body);
+		if (answersHttp(res)) {
+			res.status(failed ? 500 : 200).set('content-type', 'application/json').send(body);
+			return;
+		}
+		if (failed) throw new Error(`the Hub failed this message: ${body}`);
+		return body;
 	};
 }

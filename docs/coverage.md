@@ -381,10 +381,9 @@ Until 2026-10-29 a connection to a BigQuery dataset reached the function as
 did not parse and the report listed nothing as dropped. The table the diagram draws in the dataset
 stays empty; the messages go to `hub_messages`, as in every other database.
 
-**Receive.** `google_pubsub_topic` reads what a push subscription POSTs. An Eventarc trigger on a
-topic delivers the same object as the `data` of a CloudEvent, with the function called by the
-`cloudevent` signature, and the runtime passes that `data` to the receiver. The message id is the
-item id, and a failed hop answers 500 so that Pub/Sub delivers the message again: Pub/Sub has no
+**Receive.** `google_pubsub_topic` reads what a push subscription POSTs. A trigger on a topic calls
+the function with the `event` signature, measured on a live project: the message and a context,
+which the runtime brings back to that shape. The message id is the item id, and a failed hop answers 500 so that Pub/Sub delivers the message again: Pub/Sub has no
 partial-batch report.
 
 **Blocked on a decision.**

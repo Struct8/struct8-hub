@@ -14,11 +14,11 @@ AWS account.
 
 ### Fixed
 
-- A function with a trigger on a Pub/Sub topic reads the message. Eventarc deploys it with the
-  `cloudevent` signature, so the Functions Framework calls `handler(cloudEvent, callback)`, and the
-  runtime read that as a request and a response: it found no body, skipped the topic's receiver,
-  started another trace, and threw `res.status is not a function` at the end. Measured on a live
-  project on 2026-11-05. The runtime now reads `cloudEvent.data` and answers through the callback.
+- A function with a trigger on a Pub/Sub topic reads the message. The Functions Framework calls it
+  with the `event` signature, `handler(data, context)`, and the runtime read that as a request and a
+  response: it found no body, skipped the topic's receiver, started another trace, and threw
+  `res.status is not a function` at the end. Measured on a live project on 2026-11-05. The runtime
+  now tells the `http`, `event` and `cloudevent` signatures apart by the second argument.
 
 ### Added
 

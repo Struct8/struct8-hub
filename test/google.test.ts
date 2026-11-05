@@ -361,6 +361,46 @@ test('a CloudEvent whose forward failed answers with an error, so Pub/Sub delive
 	assert.equal(calls[0]!.result, undefined);
 });
 
+/** What the framework passes a function with a trigger on a topic: the message, and a context. */
+const topicContext = {
+	eventId: 'm-8',
+	timestamp: '2026-11-05T20:00:00.000Z',
+	eventType: 'google.pubsub.topic.publish',
+	resource: {
+		service: 'pubsub.googleapis.com',
+		name: 'projects/my-project/topics/orders',
+		type: 'type.googleapis.com/google.pubsub.v1.PubsubMessage',
+	},
+};
+const topicMessage = (data: string) => ({ data: Buffer.from(data).toString('base64'), attributes: {} });
+
+test('under the event signature, a message reaches the wires and the handler returns the report', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle(() => Response.json({}));
+
+	const answer = await withEnvironment({ NAME: 'relay', GOOGLE_STORAGE_BUCKET_NAME_0: 'archive' }, () =>
+		withFetch(g.fetchImpl, () => cloudfunctions()(topicMessage('hello'), topicContext))
+	);
+
+	const report = JSON.parse(answer as string) as Report;
+	assert.equal(report.origin, 'gcp:pubsub');
+	assert.deepEqual(report.hops.map((h) => [h.type, h.ok]), [['google_storage_bucket', true]]);
+});
+
+test('under the event signature, a failed forward throws, so the framework answers 500', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle(() =>
+		Response.json({ error: { status: 'PERMISSION_DENIED', message: 'denied' } }, { status: 403 })
+	);
+
+	await assert.rejects(
+		withEnvironment({ NAME: 'relay', GOOGLE_STORAGE_BUCKET_NAME_0: 'archive' }, () =>
+			withFetch(g.fetchImpl, () => cloudfunctions()(topicMessage('hello'), topicContext))
+		),
+		/m-8/
+	);
+});
+
 test('a direct request whose forward failed still answers 200: the report carries the failure', async () => {
 	google.resetCredentials();
 	const g = fakeGoogle(() => Response.json({ error: { status: 'NOT_FOUND', message: 'no bucket' } }, { status: 404 }));

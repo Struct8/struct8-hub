@@ -6446,7 +6446,9 @@ var onish = (value) => {
 };
 
 // dist/runtimes/cloudfunctions.js
+var TOPIC_PUBLISH = "google.pubsub.topic.publish";
 var completes = (res) => typeof res === "function";
+var answersHttp = (res) => typeof res?.status === "function";
 var REDELIVERED = /* @__PURE__ */ new Set(["gcp:pubsub"]);
 var env2 = (name) => typeof process === "undefined" ? void 0 : process.env[name];
 function eventOf(req) {
@@ -6459,6 +6461,22 @@ function eventOf(req) {
     return req.rawBody?.toString("utf8") ?? String(body);
   }
   return body;
+}
+function eventOfContext(data, context) {
+  if (context.eventType !== TOPIC_PUBLISH)
+    return data;
+  const resource = context.resource;
+  return {
+    message: { ...data, messageId: context.eventId },
+    subscription: (typeof resource === "string" ? resource : resource?.name) ?? "topic"
+  };
+}
+function delivered(first, second) {
+  if (completes(second))
+    return first.data;
+  if (answersHttp(second))
+    return eventOf(first);
+  return eventOfContext(first, second);
 }
 var tracingEnabled = () => onish(env2("HUB_TRACE"));
 function header(req, name) {
@@ -6484,7 +6502,7 @@ function cloudfunctions(opts = {}) {
     neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
     const self = env2("NAME") ?? env2("K_SERVICE") ?? "hub";
     const here = await whereAmI(globalThis.fetch);
-    const arrival = await normalize(completes(res) ? req.data : eventOf(req));
+    const arrival = await normalize(delivered(req, res));
     const trace = traceOf(req, arrival);
     const ctx = {
       self,
@@ -6518,7 +6536,13 @@ function cloudfunctions(opts = {}) {
       res(failed2 ? new Error(`the Hub failed this message: ${body}`) : null, failed2 ? void 0 : body);
       return;
     }
-    res.status(failed2 ? 500 : 200).set("content-type", "application/json").send(body);
+    if (answersHttp(res)) {
+      res.status(failed2 ? 500 : 200).set("content-type", "application/json").send(body);
+      return;
+    }
+    if (failed2)
+      throw new Error(`the Hub failed this message: ${body}`);
+    return body;
   };
 }
 
@@ -8657,8 +8681,8 @@ register({
       origin: "aws:sqs",
       describe: `SQS ${name} (${items.length} message(s), polled)`,
       items,
-      async ack(delivered) {
-        const entries = delivered.map((item) => {
+      async ack(delivered2) {
+        const entries = delivered2.map((item) => {
           const handle2 = item.id === void 0 ? void 0 : handles.get(item.id);
           return handle2 === void 0 ? void 0 : { Id: item.id, ReceiptHandle: handle2 };
         }).filter((entry) => entry !== void 0);
