@@ -312,6 +312,55 @@ test('a Pub/Sub delivery whose forward failed answers 500, so Pub/Sub delivers i
 	assert.match(report.hops[0]!.err ?? '', /PERMISSION_DENIED/);
 });
 
+/** What a trigger on a topic delivers: the push body as the `data` of a CloudEvent. */
+const topicEvent = (data: string) => ({
+	specversion: '1.0',
+	type: 'google.cloud.pubsub.topic.v1.messagePublished',
+	source: '//pubsub.googleapis.com/projects/my-project/topics/orders',
+	data: {
+		message: { data: Buffer.from(data).toString('base64'), messageId: 'm-7' },
+		subscription: 'projects/my-project/subscriptions/eventarc-us-central1-relay',
+	},
+});
+
+/** The Functions Framework's callback for the `cloudevent` signature, as a promise of its call. */
+function fakeCallback() {
+	const calls: Array<{ err: Error | null; result: string | undefined }> = [];
+	return { calls, callback: (err: Error | null, result?: string) => void calls.push({ err, result }) };
+}
+
+test('a CloudEvent from a trigger on a topic is read as the Pub/Sub message, and answered through the callback', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle(() => Response.json({}));
+	const { calls, callback } = fakeCallback();
+
+	await withEnvironment({ NAME: 'relay', GOOGLE_STORAGE_BUCKET_NAME_0: 'archive' }, () =>
+		withFetch(g.fetchImpl, () => cloudfunctions()(topicEvent('hello'), callback))
+	);
+
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0]!.err, null);
+	const report = JSON.parse(calls[0]!.result!) as Report;
+	assert.equal(report.origin, 'gcp:pubsub');
+	assert.deepEqual(report.hops.map((h) => [h.type, h.ok]), [['google_storage_bucket', true]]);
+});
+
+test('a CloudEvent whose forward failed answers with an error, so Pub/Sub delivers it again', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle(() =>
+		Response.json({ error: { status: 'PERMISSION_DENIED', message: 'denied' } }, { status: 403 })
+	);
+	const { calls, callback } = fakeCallback();
+
+	await withEnvironment({ NAME: 'relay', GOOGLE_STORAGE_BUCKET_NAME_0: 'archive' }, () =>
+		withFetch(g.fetchImpl, () => cloudfunctions()(topicEvent('hello'), callback))
+	);
+
+	assert.equal(calls.length, 1);
+	assert.match(calls[0]!.err?.message ?? '', /m-7/);
+	assert.equal(calls[0]!.result, undefined);
+});
+
 test('a direct request whose forward failed still answers 200: the report carries the failure', async () => {
 	google.resetCredentials();
 	const g = fakeGoogle(() => Response.json({ error: { status: 'NOT_FOUND', message: 'no bucket' } }, { status: 404 }));

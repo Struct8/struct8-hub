@@ -6446,6 +6446,7 @@ var onish = (value) => {
 };
 
 // dist/runtimes/cloudfunctions.js
+var completes = (res) => typeof res === "function";
 var REDELIVERED = /* @__PURE__ */ new Set(["gcp:pubsub"]);
 var env2 = (name) => typeof process === "undefined" ? void 0 : process.env[name];
 function eventOf(req) {
@@ -6483,7 +6484,7 @@ function cloudfunctions(opts = {}) {
     neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
     const self = env2("NAME") ?? env2("K_SERVICE") ?? "hub";
     const here = await whereAmI(globalThis.fetch);
-    const arrival = await normalize(eventOf(req));
+    const arrival = await normalize(completes(res) ? req.data : eventOf(req));
     const trace = traceOf(req, arrival);
     const ctx = {
       self,
@@ -6512,7 +6513,12 @@ function cloudfunctions(opts = {}) {
     }));
     await emitTrace(report, trace, self, here, globalThis.fetch);
     const failed2 = (report.faults ?? []).length > 0 || REDELIVERED.has(arrival.origin) && report.failed.length > 0;
-    res.status(failed2 ? 500 : 200).set("content-type", "application/json").send(JSON.stringify(report));
+    const body = JSON.stringify(report);
+    if (completes(res)) {
+      res(failed2 ? new Error(`the Hub failed this message: ${body}`) : null, failed2 ? void 0 : body);
+      return;
+    }
+    res.status(failed2 ? 500 : 200).set("content-type", "application/json").send(body);
   };
 }
 

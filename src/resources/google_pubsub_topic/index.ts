@@ -5,8 +5,8 @@ import * as google from '../../providers/google.js';
 import type { Arrival, Ctx, Neighbor } from '../../core/types.js';
 
 /**
- * What a push subscription POSTs, and what an Eventarc trigger on a topic delivers to a function
- * over HTTP: the same body in both cases.
+ * What a push subscription POSTs. An Eventarc trigger on a topic delivers the same object as the
+ * `data` of a CloudEvent, and runtimes/cloudfunctions.ts passes that `data` here.
  * https://docs.cloud.google.com/pubsub/docs/push#receive_push
  */
 interface PushBody {

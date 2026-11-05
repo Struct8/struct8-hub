@@ -14,6 +14,12 @@
  * ```
  *
  * The function's `build_config.entry_point` is `handler`.
+ *
+ * A function with an `event_trigger` is not called the way an HTTP function is. Eventarc deploys it
+ * with the `cloudevent` signature, and the Functions Framework then calls
+ * `handler(cloudEvent, callback)`: the same two arguments, with other things in them. The handler
+ * tells the two apart by the second one (`completes`), because the entry point is the same name in
+ * both. See `wrapCloudEventFunctionWithCallback` in the framework's src/function_wrappers.ts.
  */
 
 import { discover } from '../core/discovery.js';
@@ -41,6 +47,23 @@ export interface HttpResponse {
 	set(field: string, value: string): HttpResponse;
 	send(body: string): unknown;
 }
+
+/**
+ * The fields of a CloudEvent this shim reads. On a trigger on a topic, `data` is the body a push
+ * subscription POSTs: `{ message, subscription }`.
+ */
+export interface CloudEvent {
+	readonly data?: unknown;
+}
+
+/**
+ * How a function with the `cloudevent` signature answers. An error makes the framework answer 500,
+ * and Pub/Sub then delivers the message again; a value becomes the body of a 200.
+ */
+export type CloudEventCallback = (err: Error | null, result?: string) => void;
+
+/** Whether the framework called the `cloudevent` signature: there, the second argument is a function. */
+const completes = (res: HttpResponse | CloudEventCallback): res is CloudEventCallback => typeof res === 'function';
 
 /**
  * Sources that redeliver a message the function answered with an error. A failed hop has to fail
@@ -119,7 +142,10 @@ export interface CloudFunctionsOptions {
 export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 	let neighbors: readonly Neighbor[] | undefined;
 
-	return async function handler(req: HttpRequest, res: HttpResponse): Promise<void> {
+	return async function handler(
+		req: HttpRequest | CloudEvent,
+		res: HttpResponse | CloudEventCallback
+	): Promise<void> {
 		// Resolved on first request rather than at module load, so that a shim which registers
 		// resources after calling cloudfunctions() still sees a complete vocabulary.
 		neighbors ??= discover(typeof process === 'undefined' ? {} : process.env, registry.vocabulary());
@@ -129,8 +155,8 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 		const self = env('NAME') ?? env('K_SERVICE') ?? 'hub';
 		const here = await google.whereAmI(globalThis.fetch);
 
-		const arrival = await normalize(eventOf(req));
-		const trace = traceOf(req, arrival);
+		const arrival = await normalize(completes(res) ? (req as CloudEvent).data : eventOf(req as HttpRequest));
+		const trace = traceOf(req as HttpRequest, arrival);
 
 		const ctx: Ctx = {
 			self,
@@ -175,6 +201,11 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 		// error must see one when an item failed, or the message is gone.
 		const failed =
 			(report.faults ?? []).length > 0 || (REDELIVERED.has(arrival.origin) && report.failed.length > 0);
-		res.status(failed ? 500 : 200).set('content-type', 'application/json').send(JSON.stringify(report));
+		const body = JSON.stringify(report);
+		if (completes(res)) {
+			res(failed ? new Error(`the Hub failed this message: ${body}`) : null, failed ? undefined : body);
+			return;
+		}
+		res.status(failed ? 500 : 200).set('content-type', 'application/json').send(body);
 	};
 }

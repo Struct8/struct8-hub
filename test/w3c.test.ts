@@ -291,6 +291,28 @@ test('with HUB_TRACE on, a function continues the message trace and writes it to
 	assert.equal(forwarded, `00-${W3C}-${run.spanId}-01`);
 });
 
+test('a CloudEvent from a trigger on a topic continues the trace the message carries', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle((s) => (s.url.startsWith(google.TELEMETRY_TRACES) ? Response.json({}) : Response.json({ messageIds: ['1'] })));
+	const answers: Array<string | undefined> = [];
+
+	await withEnvironment({ NAME: 'relay', HUB_TRACE: 'on', GOOGLE_PUBSUB_TOPIC_NAME_NEXT: 'next' }, () =>
+		withFetch(g.fetchImpl, () =>
+			cloudfunctions()({ data: PUSH }, (err, result) => {
+				assert.equal(err, null);
+				answers.push(result);
+			})
+		)
+	);
+
+	assert.equal(answers.length, 1);
+	assert.equal((JSON.parse(answers[0]!) as Report).trace, ROOT);
+	const telemetry = g.calls().find((c) => c.url === google.TELEMETRY_TRACES);
+	const [run] = JSON.parse(telemetry!.body).resourceSpans[0].scopeSpans[0].spans;
+	assert.equal(run.traceId, W3C);
+	assert.equal(run.parentSpanId, '53995c3f42cd8ad8');
+});
+
 test('a request with only the header continues the header trace', async () => {
 	google.resetCredentials();
 	const g = fakeGoogle((s) => (s.url.startsWith(google.TELEMETRY_TRACES) ? Response.json({}) : Response.json({ messageIds: ['1'] })));
