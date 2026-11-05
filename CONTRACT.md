@@ -1,10 +1,11 @@
 # Wiring contract
 
-**Version 1.3** · applies to AWS and Google Cloud · English only (this document changes with every contract revision)
+**Version 1.4** · applies to AWS and Google Cloud · English only (this document changes with every contract revision)
 
-Version 1.3 adds traces that cross workloads and clouds (§6.3). Version 1.2 added a workload on AWS
-that reaches Google Cloud (§6.2), and version 1.1 added Google Cloud (§6.1, §7). None of them changes
-anything an AWS consumer already reads.
+Version 1.4 changes what a workload on AWS reaching Google Cloud receives (§6.2): two variables in
+place of the parameter `CROSS_CLOUD_PARAMETER` named. Version 1.3 added traces that cross workloads
+and clouds (§6.3). Version 1.2 added a workload on AWS that reaches Google Cloud (§6.2), and version
+1.1 added Google Cloud (§6.1, §7). Nothing else an AWS consumer reads has changed.
 
 This is the agreement between the generator that emits infrastructure and the workload that runs
 inside it. The generator turns each wire in the diagram into one or more environment variables;
@@ -171,19 +172,19 @@ state. The workload's variables then carry:
 
 | variable | value |
 |---|---|
-| `CROSS_CLOUD_PARAMETER` | the name of a parameter of AWS Systems Manager, in the workload's account and Region, holding Google's credential configuration file (`"type": "external_account"`) |
+| `GOOGLE_WORKLOAD_PROVIDER` | the full name of the provider that checks the workload's role: `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `GOOGLE_SERVICE_ACCOUNT` | the e-mail of the service account the workload acts as |
 | `<TYPE>_NAME_<LABEL>` | the resource's name, as for any wire |
 | `<TYPE>_ACCOUNT_<LABEL>` | the project id. **Always present** on these wires: a workload on AWS has no project of its own to fall back on |
 
-The workload reads the parameter with its own role and exchanges a signed STS `GetCallerIdentity`
-request for a Google token, then acts as the service account the Google state created for the
-component, which holds the roles of the diagram's connections. The configuration is the file
-`gcloud iam workload-identity-pools create-cred-config` writes, so any Google client library reads
-it as it is. A workload reaching Cloudflare gets `CROSS_CLOUD_PARAMETER` too, naming the parameter
-of its R2 keys; what the parameter holds tells the two apart.
+The workload exchanges a signed STS `GetCallerIdentity` request for a Google token at
+`https://sts.googleapis.com/v1/token`, with `//iam.googleapis.com/<GOOGLE_WORKLOAD_PROVIDER>` as the
+audience, then acts as the service account, which holds the roles of the diagram's connections.
+Nothing is written in the AWS account, and the role needs no permission for the exchange: signing
+`GetCallerIdentity` needs none.
 
-A Cloud Run service or a function reached this way has no `URL` on the wire: the address is a
-Terraform reference of the Google state, which the AWS state cannot read.
+A Cloud Run service or a function reached this way has its `URL` on the wire: the generator writes
+the address from the diagram, because the AWS state cannot read the Google state.
 
 ### 6.3 Traces across workloads
 

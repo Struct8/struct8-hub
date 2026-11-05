@@ -1,7 +1,7 @@
 /**
- * A workload on AWS reaching Google through workload identity federation: the parameter read from
- * Systems Manager, the signed GetCallerIdentity handed to Google STS, the service account's tokens,
- * and a Pub/Sub publish from a Lambda carrying them. Nothing here reaches the network.
+ * A workload on AWS reaching Google through workload identity federation: the signed
+ * GetCallerIdentity handed to Google STS, the service account's tokens, and a Pub/Sub publish from a
+ * Lambda carrying them. Nothing here reaches the network.
  */
 
 import { test, afterEach } from 'node:test';
@@ -15,28 +15,18 @@ import * as google from '../dist/providers/google.js';
 import { subjectToken } from '../dist/providers/googleFederation.js';
 import type { Ctx, Neighbor } from '../dist/core/types.js';
 
-const AUDIENCE = '//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/hub-pool/providers/aws';
+const PROVIDER = 'projects/123456789/locations/global/workloadIdentityPools/hub-pool/providers/aws';
+const AUDIENCE = `//iam.googleapis.com/${PROVIDER}`;
 const ACCOUNT = 'hub-reader@my-project.iam.gserviceaccount.com';
 const IMPERSONATE = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${ACCOUNT}:generateAccessToken`;
-
-const CONFIG = {
-	type: 'external_account',
-	audience: AUDIENCE,
-	subject_token_type: 'urn:ietf:params:aws:token-type:aws4_request',
-	token_url: 'https://sts.googleapis.com/v1/token',
-	service_account_impersonation_url: IMPERSONATE,
-	credential_source: {
-		environment_id: 'aws1',
-		regional_cred_verification_url: 'https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15',
-	},
-};
 
 const ENV = {
 	AWS_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
 	AWS_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
 	AWS_SESSION_TOKEN: 'session-token',
 	AWS_REGION: 'us-east-1',
-	CROSS_CLOUD_PARAMETER: '/cross-cloud/HubToGoogle/google',
+	GOOGLE_WORKLOAD_PROVIDER: PROVIDER,
+	GOOGLE_SERVICE_ACCOUNT: ACCOUNT,
 };
 
 const before = { ...process.env };
@@ -58,17 +48,14 @@ interface Seen {
 	readonly body: string;
 }
 
-/** A fake AWS and Google: the parameter, Google STS, IAM Credentials and Pub/Sub. */
-function fake(config: unknown = CONFIG) {
+/** A fake Google: STS, IAM Credentials and Pub/Sub. */
+function fake() {
 	const seen: Seen[] = [];
 	const fetchImpl: typeof fetch = async (input, init) => {
 		const request = input instanceof Request ? input : new Request(input, init);
 		const s: Seen = { url: request.url, headers: request.headers, body: await request.text() };
 		seen.push(s);
 		const url = new URL(s.url);
-		if (url.hostname === 'ssm.us-east-1.amazonaws.com') {
-			return Response.json({ Parameter: { Value: JSON.stringify(config) } });
-		}
 		if (url.hostname === 'sts.googleapis.com') return Response.json({ access_token: 'federated', expires_in: 3600 });
 		if (url.pathname.endsWith(':generateAccessToken')) {
 			return Response.json({ accessToken: 'ya29.account', expireTime: new Date(Date.now() + 3600_000).toISOString() });
@@ -80,15 +67,13 @@ function fake(config: unknown = CONFIG) {
 	return { seen, fetchImpl };
 }
 
-test('the access token is the service account\'s, through the parameter, STS and IAM Credentials', async () => {
+test('the access token is the service account\'s, through STS and IAM Credentials', async () => {
 	withEnv(ENV);
 	const { seen, fetchImpl } = fake();
 	assert.equal(await google.accessToken(fetchImpl), 'ya29.account');
 
-	const [parameter, sts, impersonate] = seen;
-	assert.equal(parameter!.headers.get('x-amz-target'), 'AmazonSSM.GetParameter');
-	assert.deepEqual(JSON.parse(parameter!.body), { Name: '/cross-cloud/HubToGoogle/google', WithDecryption: true });
-
+	const [sts, impersonate] = seen;
+	assert.equal(sts!.url, 'https://sts.googleapis.com/v1/token');
 	const exchange = JSON.parse(sts!.body) as Record<string, string>;
 	assert.equal(exchange['audience'], AUDIENCE);
 	assert.equal(exchange['subject_token_type'], 'urn:ietf:params:aws:token-type:aws4_request');
@@ -99,12 +84,12 @@ test('the access token is the service account\'s, through the parameter, STS and
 
 	// Cached: a second call asks nobody.
 	assert.equal(await google.accessToken(fetchImpl), 'ya29.account');
-	assert.equal(seen.length, 3);
+	assert.equal(seen.length, 2);
 });
 
 test('the subject token is the signed GetCallerIdentity, bound to the provider', async () => {
 	withEnv(ENV);
-	const token = JSON.parse(decodeURIComponent(await subjectToken(CONFIG as never, 'us-east-1'))) as {
+	const token = JSON.parse(decodeURIComponent(await subjectToken(AUDIENCE, 'us-east-1'))) as {
 		url: string;
 		method: string;
 		headers: { key: string; value: string }[];
@@ -129,17 +114,23 @@ test('an identity token is generated for the URL being called', async () => {
 	assert.deepEqual(JSON.parse(call.body), { audience: 'https://us-central1-my-project.cloudfunctions.net/fn', includeEmail: true });
 });
 
-test('a parameter that is not a configuration for AWS is refused by name', async () => {
+test('the exchange asks nothing of AWS: every request goes to Google', async () => {
 	withEnv(ENV);
-	const { fetchImpl } = fake({ ...CONFIG, subject_token_type: 'urn:ietf:params:oauth:token-type:jwt' });
-	await assert.rejects(google.accessToken(fetchImpl), /not a configuration for AWS/);
+	const { seen, fetchImpl } = fake();
+	await google.accessToken(fetchImpl);
+	await google.identityToken('https://us-central1-my-project.cloudfunctions.net/fn', fetchImpl);
+	for (const s of seen) assert.match(new URL(s.url).hostname, /.googleapis.com$/);
+});
+
+test('a provider with no service account to act as is refused by name', async () => {
+	withEnv({ ...ENV, GOOGLE_SERVICE_ACCOUNT: '' });
+	const { fetchImpl } = fake();
+	await assert.rejects(google.accessToken(fetchImpl), /GOOGLE_SERVICE_ACCOUNT is not set/);
 });
 
 test('Google STS refusing the exchange says why', async () => {
 	withEnv(ENV);
-	const fetchImpl: typeof fetch = async (input, init) => {
-		const url = new URL((input instanceof Request ? input : new Request(input, init)).url);
-		if (url.hostname.startsWith('ssm.')) return Response.json({ Parameter: { Value: JSON.stringify(CONFIG) } });
+	const fetchImpl: typeof fetch = async () => {
 		return Response.json(
 			{ error: 'unauthorized_client', error_description: 'The given credential is rejected by the attribute condition.' },
 			{ status: 400 }

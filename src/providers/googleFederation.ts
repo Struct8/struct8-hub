@@ -7,31 +7,34 @@
  * with the role that signed. No key is stored anywhere. Google's guide:
  * https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds
  *
- * THE CONFIGURATION is Google's own credential configuration file (`"type": "external_account"`),
- * the one `gcloud iam workload-identity-pools create-cred-config` writes and every Google client
- * library reads. The Google state of the diagram writes it into a parameter of Systems Manager, in
- * the workload's account and Region, and the workload gets the parameter's name as
- * `CROSS_CLOUD_PARAMETER`. The project NUMBER is in the configuration's audience, and the AWS state
- * has no way to learn it: that is why the file travels through the parameter and not through
- * variables.
+ * THE CONFIGURATION is two variables: `GOOGLE_WORKLOAD_PROVIDER`, the full name of the provider that
+ * checks the role, and `GOOGLE_SERVICE_ACCOUNT`, the e-mail of the account the role acts as. The
+ * endpoints are fixed here. Google warns that a credential configuration read from outside holds URLs
+ * a workload must validate, so this one reads none: what it signs goes to Google and nowhere else.
  *
  * THE EXCHANGE, in three requests:
- *   1. Google STS (`token_url`) takes the signed GetCallerIdentity and returns a federated token;
- *   2. IAM Credentials (`service_account_impersonation_url`) takes the federated token and returns
- *      the access token of the service account the Google state created for this workload: that
- *      account holds the grants of the diagram's connections;
+ *   1. Google STS takes the signed GetCallerIdentity and returns a federated token;
+ *   2. IAM Credentials takes the federated token and returns the access token of the service account
+ *      the Google state created for this workload: that account holds the grants of the diagram's
+ *      connections. Cloud Run and functions refuse a federated identity, so the account is the one
+ *      way in, and the same account serves every other destination;
  *   3. for a Cloud Run service or a function, IAM Credentials returns an identity token of the same
  *      account, for the URL being called.
  */
 
 import * as aws from './aws.js';
 
-/** The variable that names the parameter holding the configuration. */
-export const PARAMETER_VARIABLE = 'CROSS_CLOUD_PARAMETER';
+/** The full name of the provider, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`. */
+export const PROVIDER_VARIABLE = 'GOOGLE_WORKLOAD_PROVIDER';
+
+/** The e-mail of the service account the workload acts as. */
+export const ACCOUNT_VARIABLE = 'GOOGLE_SERVICE_ACCOUNT';
 
 const SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const AWS_SUBJECT = 'urn:ietf:params:aws:token-type:aws4_request';
-const DEFAULT_VERIFICATION = 'https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15';
+const TOKEN_URL = 'https://sts.googleapis.com/v1/token';
+const CREDENTIALS_URL = 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts';
+const VERIFICATION_URL = 'https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15';
 
 /** Renewed this long before Google says a token expires, as in providers/google.ts. */
 const EARLY_MS = 60_000;
@@ -39,26 +42,11 @@ const EARLY_MS = 60_000;
 /** Identity tokens last an hour; IAM Credentials does not say so in the answer. */
 const IDENTITY_TTL_MS = 55 * 60_000;
 
-/** The fields of Google's credential configuration file that the exchange reads. */
-export interface ExternalAccount {
-	readonly type: 'external_account';
-	/** `//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` */
-	readonly audience: string;
-	readonly subject_token_type: string;
-	readonly token_url: string;
-	readonly service_account_impersonation_url?: string;
-	readonly credential_source?: {
-		readonly environment_id?: string;
-		readonly regional_cred_verification_url?: string;
-	};
-}
-
 interface Cached {
 	readonly value: string;
 	readonly until: number;
 }
 
-let config: Promise<ExternalAccount> | undefined;
 let federated: Cached | undefined;
 let access: Cached | undefined;
 const identities = new Map<string, Cached>();
@@ -67,14 +55,13 @@ function env(): Record<string, string | undefined> {
 	return typeof process === 'undefined' ? {} : (process.env as Record<string, string | undefined>);
 }
 
-/** True when this workload reaches Google through federation: the compile named the parameter. */
+/** True when this workload reaches Google through federation: the compile named the provider. */
 export function configured(): boolean {
-	return Boolean(env()[PARAMETER_VARIABLE]);
+	return Boolean(env()[PROVIDER_VARIABLE]);
 }
 
 /** Test seam. Never call this from library or application code. */
 export function resetFederation(): void {
-	config = undefined;
 	federated = undefined;
 	access = undefined;
 	identities.clear();
@@ -82,44 +69,22 @@ export function resetFederation(): void {
 
 function regionOf(): string {
 	const region = env()['AWS_REGION'] ?? env()['AWS_DEFAULT_REGION'];
-	if (!region) throw new Error('no AWS Region in the environment to read the Google configuration from');
+	if (!region) throw new Error('no AWS Region in the environment to sign the Google exchange for');
 	return region;
 }
 
-/** The configuration, read once per instance. A failure is not cached: the next message tries again. */
-function configuration(fetchImpl: typeof fetch): Promise<ExternalAccount> {
-	if (config) return config;
-	const name = env()[PARAMETER_VARIABLE];
-	const pending = (async (): Promise<ExternalAccount> => {
-		if (!name) throw new Error(`no Google credentials: ${PARAMETER_VARIABLE} is not set`);
-		const answer = (await aws.json(
-			'ssm',
-			regionOf(),
-			'AmazonSSM.GetParameter',
-			{ Name: name, WithDecryption: true },
-			fetchImpl
-		)) as { Parameter?: { Value?: unknown } } | null;
-		const value = answer?.Parameter?.Value;
-		if (typeof value !== 'string' || !value) throw new Error(`the parameter ${name} has no value`);
-		let parsed: Partial<ExternalAccount>;
-		try {
-			parsed = JSON.parse(value) as Partial<ExternalAccount>;
-		} catch {
-			throw new Error(`the parameter ${name} does not hold JSON`);
-		}
-		if (parsed.type !== 'external_account' || !parsed.audience || !parsed.token_url) {
-			throw new Error(`the parameter ${name} does not hold a Google external account configuration`);
-		}
-		if (parsed.subject_token_type !== AWS_SUBJECT) {
-			throw new Error(`the parameter ${name} is not a configuration for AWS (subject_token_type ${String(parsed.subject_token_type)})`);
-		}
-		return parsed as ExternalAccount;
-	})();
-	config = pending;
-	pending.catch(() => {
-		if (config === pending) config = undefined;
-	});
-	return pending;
+/** The audience of the exchange: the provider, as Google names it there. */
+function audienceOf(): string {
+	const provider = env()[PROVIDER_VARIABLE];
+	if (!provider) throw new Error(`no Google credentials: ${PROVIDER_VARIABLE} is not set`);
+	return `//iam.googleapis.com/${provider}`;
+}
+
+/** The address of a method of the service account, in IAM Credentials. */
+function accountMethod(method: 'generateAccessToken' | 'generateIdToken'): string {
+	const account = env()[ACCOUNT_VARIABLE];
+	if (!account) throw new Error(`no Google credentials: ${ACCOUNT_VARIABLE} is not set`);
+	return `${CREDENTIALS_URL}/${account}:${method}`;
 }
 
 /**
@@ -127,11 +92,11 @@ function configuration(fetchImpl: typeof fetch): Promise<ExternalAccount> {
  * the signature covers, URL-encoded. `x-goog-cloud-target-resource` names the provider, so a
  * signature made for this provider cannot be replayed against another.
  */
-export async function subjectToken(cfg: ExternalAccount, region: string): Promise<string> {
-	const url = (cfg.credential_source?.regional_cred_verification_url ?? DEFAULT_VERIFICATION).replace('{region}', region);
+export async function subjectToken(audience: string, region: string): Promise<string> {
+	const url = VERIFICATION_URL.replace('{region}', region);
 	const request = await aws.signed(url, 'sts', region, {
 		method: 'POST',
-		headers: { 'x-goog-cloud-target-resource': cfg.audience },
+		headers: { 'x-goog-cloud-target-resource': audience },
 	});
 	const headers: { key: string; value: string }[] = [{ key: 'host', value: new URL(url).host }];
 	request.headers.forEach((value, key) => headers.push({ key, value }));
@@ -157,18 +122,19 @@ async function failed(res: Response, what: string): Promise<never> {
 }
 
 /** Step 1: the federated token, from Google STS. */
-async function federatedToken(cfg: ExternalAccount, fetchImpl: typeof fetch): Promise<string> {
+async function federatedToken(fetchImpl: typeof fetch): Promise<string> {
 	if (federated && federated.until > Date.now()) return federated.value;
-	const res = await fetchImpl(cfg.token_url, {
+	const audience = audienceOf();
+	const res = await fetchImpl(TOKEN_URL, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({
 			grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-			audience: cfg.audience,
+			audience,
 			scope: SCOPE,
 			requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-			subject_token: await subjectToken(cfg, regionOf()),
-			subject_token_type: cfg.subject_token_type,
+			subject_token: await subjectToken(audience, regionOf()),
+			subject_token_type: AWS_SUBJECT,
 		}),
 	});
 	if (!res.ok) await failed(res, 'the token exchange with Google STS');
@@ -181,13 +147,11 @@ async function federatedToken(cfg: ExternalAccount, fetchImpl: typeof fetch): Pr
 	return federated.value;
 }
 
-/** Step 2: the access token of the service account, or the federated token when there is none to act as. */
+/** Step 2: the access token of the service account. */
 export async function accessToken(fetchImpl: typeof fetch = fetch): Promise<string> {
 	if (access && access.until > Date.now()) return access.value;
-	const cfg = await configuration(fetchImpl);
-	const token = await federatedToken(cfg, fetchImpl);
-	const url = cfg.service_account_impersonation_url;
-	if (!url) return token;
+	const url = accountMethod('generateAccessToken');
+	const token = await federatedToken(fetchImpl);
 
 	const res = await fetchImpl(url, {
 		method: 'POST',
@@ -208,13 +172,9 @@ export async function accessToken(fetchImpl: typeof fetch = fetch): Promise<stri
 export async function identityToken(audience: string, fetchImpl: typeof fetch = fetch): Promise<string> {
 	const cached = identities.get(audience);
 	if (cached && cached.until > Date.now()) return cached.value;
-	const cfg = await configuration(fetchImpl);
-	const url = cfg.service_account_impersonation_url;
-	if (!url) {
-		throw new Error('no identity token without a service account: the configuration names none to act as');
-	}
-	const token = await federatedToken(cfg, fetchImpl);
-	const res = await fetchImpl(url.replace(/:generateAccessToken$/, ':generateIdToken'), {
+	const url = accountMethod('generateIdToken');
+	const token = await federatedToken(fetchImpl);
+	const res = await fetchImpl(url, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
 		body: JSON.stringify({ audience, includeEmail: true }),

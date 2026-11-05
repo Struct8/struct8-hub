@@ -17,7 +17,7 @@
  *
  * Outside Google Cloud, a workload on AWS gets both tokens through workload identity federation,
  * with its own role and no key (`providers/googleFederation.ts`), when the compile gave it
- * `CROSS_CLOUD_PARAMETER`.
+ * `GOOGLE_WORKLOAD_PROVIDER`.
  */
 
 import { traceparent } from '../core/envelope.js';

@@ -12,6 +12,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 Nothing is published yet. The core runs and is tested; nothing has been executed against a live
 AWS account.
 
+### Changed
+
+- **Contract v1.4**: a workload on AWS reaching Google Cloud receives `GOOGLE_WORKLOAD_PROVIDER` and
+  `GOOGLE_SERVICE_ACCOUNT`, and no longer reads a parameter of Systems Manager. The endpoints are
+  fixed in `providers/googleFederation.ts`, so what the workload signs can only go to Google, and
+  its role no longer needs `ssm:GetParameter`. A workload that still receives
+  `CROSS_CLOUD_PARAMETER` for Google stops reaching it: compile its state again.
+
 ### Fixed
 
 - A function with a trigger on a Pub/Sub topic reads the message. The Functions Framework calls it
