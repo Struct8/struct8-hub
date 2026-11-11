@@ -271,6 +271,20 @@ export interface Hop {
 }
 
 /**
+ * When a run started and how long it took, as the runtime timed it: the two numbers a hop carries.
+ *
+ * Read by the trace builders only for a run with no hops. A run that delivered something is placed
+ * by its hops. One that delivered nothing, such as the receiver of a topic with no wire out, has
+ * nothing else to place it by: without this it wrote no span, and the trace showed the runs before
+ * it and not the one where the chain ended.
+ */
+export interface RunTiming {
+	/** When the run started, epoch milliseconds. */
+	readonly at: number;
+	readonly ms: number;
+}
+
+/**
  * The point of the whole exercise.
  *
  * A wire that carried a message and a wire that was never exercised are different facts, and both

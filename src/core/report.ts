@@ -10,7 +10,7 @@
 
 import { displayName } from './discovery.js';
 import { spanId, w3cTraceId } from './envelope.js';
-import type { Fault, Hop, Neighbor, Report, TraceContext } from './types.js';
+import type { Fault, Hop, Neighbor, Report, RunTiming, TraceContext } from './types.js';
 
 /**
  * Trims an error to something a report line can hold without losing the useful part.
@@ -121,6 +121,24 @@ type Document = Record<string, unknown>;
 const seconds = (ms: number): number => ms / 1000;
 
 /**
+ * Where the run's own segment or span starts and ends, epoch milliseconds, or `null` when nothing
+ * places it.
+ *
+ * From the hops when there are any, as it always was: the first attempt's start to the last one's
+ * end. A run with no hops is placed by `run`, the runtime's own timing of it. Without that timing
+ * there is nothing to place it by and nothing is written.
+ */
+function bounds(report: Report, run: RunTiming | undefined): { start: number; end: number } | null {
+	if (report.hops.length > 0) {
+		return {
+			start: Math.min(...report.hops.map((hop) => hop.at)),
+			end: Math.max(...report.hops.map((hop) => hop.at + hop.ms)),
+		};
+	}
+	return run ? { start: run.at, end: run.at + run.ms } : null;
+}
+
+/**
  * One hop as a subsegment.
  *
  * `namespace: 'remote'` rather than `'aws'`, which is the honest one of the two. `'aws'` promises
@@ -161,20 +179,23 @@ function subsegment(hop: Hop, trace: TraceContext): Document {
  *   opening     — a container. Nobody wrote one, so the run writes it, with the hops nested inside.
  *                 A subsegment whose parent does not exist is accepted by the API and then never
  *                 displayed, which is the worst of the available failures: it looks like it worked.
+ *                 A run with no hops still writes its segment, placed by `run`.
  *
  * Pure: it builds strings. Sending them is a provider's job — see `emitTrace` in providers/aws.ts.
  */
-export function segments(report: Report, trace: TraceContext, self: string): string[] {
-	if (!trace.sampled || report.hops.length === 0) return [];
+export function segments(report: Report, trace: TraceContext, self: string, run?: RunTiming): string[] {
+	if (!trace.sampled) return [];
 
+	// With no hops this is no document at all, which is right: the service already wrote the
+	// segment of the invocation.
 	if (trace.parent && !trace.opens) {
 		return report.hops.map((hop) =>
 			JSON.stringify({ ...subsegment(hop, trace), type: 'subsegment', parent_id: trace.parent })
 		);
 	}
 
-	const starts = report.hops.map((hop) => hop.at);
-	const ends = report.hops.map((hop) => hop.at + hop.ms);
+	const window = bounds(report, run);
+	if (!window) return [];
 
 	return [
 		JSON.stringify({
@@ -185,8 +206,8 @@ export function segments(report: Report, trace: TraceContext, self: string): str
 			trace_id: trace.root,
 			// The caller's span, so the console draws the line from it to this one.
 			...(trace.upstream ? { parent_id: trace.upstream } : {}),
-			start_time: seconds(Math.min(...starts)),
-			end_time: seconds(Math.max(...ends)),
+			start_time: seconds(window.start),
+			end_time: seconds(window.end),
 			annotations: { origin: report.origin, dropped: report.dropped },
 			...(report.hops.some((hop) => !hop.ok) ? { error: true } : {}),
 			subsegments: report.hops.map((hop) => subsegment(hop, trace)),
@@ -230,6 +251,10 @@ export interface SpanResource {
  * the run's own span goes up with the hops as its children. Its id is `trace.parent`, the id the
  * runtime already handed downstream, and its parent is `trace.upstream`, the caller's span.
  *
+ * A run with no hops goes up as its span alone, placed by `run`. The receiver of a topic with no
+ * wire out is such a run. On Google no platform writes its span into this trace: the push request
+ * that delivers the message carries Pub/Sub's trace, not the publisher's.
+ *
  * The hop attributes carry what the X-Ray annotations carry, under a `struct8.` prefix: the
  * names OpenTelemetry defines say nothing about a wire in a diagram.
  *
@@ -238,22 +263,27 @@ export interface SpanResource {
  *
  * Pure: it builds an object. Sending it is a provider's job — see `emitTrace` in providers/google.ts.
  */
-export function spans(report: Report, trace: TraceContext, resource: SpanResource): Record<string, unknown> | null {
-	if (!trace.sampled || report.hops.length === 0) return null;
+export function spans(
+	report: Report,
+	trace: TraceContext,
+	resource: SpanResource,
+	run?: RunTiming
+): Record<string, unknown> | null {
+	if (!trace.sampled) return null;
+	const window = bounds(report, run);
+	if (!window) return null;
 
 	const traceId = w3cTraceId(trace.root);
 	const runId = trace.parent ?? spanId();
-	const starts = report.hops.map((hop) => hop.at);
-	const ends = report.hops.map((hop) => hop.at + hop.ms);
 
-	const run = {
+	const own = {
 		traceId,
 		spanId: runId,
 		...(trace.upstream ? { parentSpanId: trace.upstream } : {}),
 		name: resource.service,
 		kind: CONSUMED.test(report.origin) ? KIND.consumer : KIND.server,
-		startTimeUnixNano: nanos(Math.min(...starts)),
-		endTimeUnixNano: nanos(Math.max(...ends)),
+		startTimeUnixNano: nanos(window.start),
+		endTimeUnixNano: nanos(window.end),
 		attributes: [str('struct8.origin', report.origin), int('struct8.dropped', report.dropped)],
 		status: report.hops.some((hop) => !hop.ok)
 			? { code: 2, message: `${report.hops.filter((hop) => !hop.ok).length} of ${report.hops.length} hops failed` }
@@ -283,7 +313,7 @@ export function spans(report: Report, trace: TraceContext, resource: SpanResourc
 						...Object.entries(resource.attributes).map(([key, value]) => str(key, value)),
 					],
 				},
-				scopeSpans: [{ scope: { name: '@struct8/hub' }, spans: [run, ...hops] }],
+				scopeSpans: [{ scope: { name: '@struct8/hub' }, spans: [own, ...hops] }],
 			},
 		],
 	};

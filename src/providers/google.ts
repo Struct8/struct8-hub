@@ -22,7 +22,7 @@
 
 import { traceparent } from '../core/envelope.js';
 import { spans } from '../core/report.js';
-import type { Report, TraceContext } from '../core/types.js';
+import type { Report, RunTiming, TraceContext } from '../core/types.js';
 import * as federation from './googleFederation.js';
 
 const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
@@ -279,24 +279,32 @@ export const TELEMETRY_TRACES = 'https://telemetry.googleapis.com/v1/traces';
  * The failures that matter are the likely ones, and the log names them: `PERMISSION_DENIED`
  * until the service account has `telemetry.traces.write` (the role `roles/telemetry.tracesWriter`),
  * and `SERVICE_DISABLED` until the project enables `telemetry.googleapis.com`.
+ *
+ * `run` is the runtime's timing of the run, which places the span of a run with no hops.
  */
 export async function emitTrace(
 	report: Report,
 	trace: TraceContext | undefined,
 	self: string,
 	where: Place,
-	fetchImpl: typeof fetch = fetch
+	fetchImpl: typeof fetch = fetch,
+	run?: RunTiming
 ): Promise<void> {
 	if (!trace || !where.project) return;
 
-	const request = spans(report, trace, {
-		service: self,
-		attributes: {
-			'gcp.project_id': where.project,
-			'cloud.provider': 'gcp',
-			...(where.region ? { 'cloud.region': where.region } : {}),
+	const request = spans(
+		report,
+		trace,
+		{
+			service: self,
+			attributes: {
+				'gcp.project_id': where.project,
+				'cloud.provider': 'gcp',
+				...(where.region ? { 'cloud.region': where.region } : {}),
+			},
 		},
-	});
+		run
+	);
 	if (!request) return;
 
 	try {

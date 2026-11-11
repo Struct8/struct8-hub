@@ -112,9 +112,38 @@ test('the run is one span, the hops its children, all in the W3C trace id', () =
 	]);
 });
 
-test('nothing is recorded when the trace is not sampled or no hop ran', () => {
+test('nothing is recorded when the trace is not sampled, or when no hop ran and the run was not timed', () => {
 	assert.equal(spans(HOPS, { ...OPENING, sampled: false }, { service: 'x', attributes: {} }), null);
 	assert.equal(spans({ ...HOPS, hops: [] }, OPENING, { service: 'x', attributes: {} }), null);
+	assert.equal(spans({ ...HOPS, hops: [] }, { ...OPENING, sampled: false }, { service: 'x', attributes: {} }, { at: 1, ms: 1 }), null);
+});
+
+test('a run with no hops is its own span alone, placed by the runtime timing', () => {
+	const sink: Report = { ...HOPS, hops: [], failed: [] };
+	const request = spans(sink, OPENING, { service: 'listener', attributes: {} }, { at: 1_700_000_000_000, ms: 25 }) as any;
+	const all = request.resourceSpans[0].scopeSpans[0].spans;
+
+	assert.equal(all.length, 1);
+	const [run] = all;
+	assert.equal(run.traceId, W3C);
+	assert.equal(run.spanId, 'aaaaaaaaaaaaaaaa');
+	assert.equal(run.parentSpanId, '53995c3f42cd8ad8', 'under the span of the workload that published');
+	assert.equal(run.name, 'listener');
+	assert.equal(run.kind, 5, 'a Pub/Sub delivery is consumed, not served');
+	assert.equal(run.startTimeUnixNano, '1700000000000000000');
+	assert.equal(run.endTimeUnixNano, '1700000000025000000');
+	assert.deepEqual(run.status, { code: 0 });
+
+	const served = spans({ ...sink, origin: 'gcp:http' }, OPENING, { service: 'listener', attributes: {} }, { at: 1_700_000_000_000, ms: 25 }) as any;
+	assert.equal(served.resourceSpans[0].scopeSpans[0].spans[0].kind, 2, 'a request is served');
+});
+
+test('a run with hops is placed by its hops, whatever the runtime timed', () => {
+	const request = spans(HOPS, OPENING, { service: 'relay', attributes: {} }, { at: 1_699_999_999_000, ms: 9_000 }) as any;
+	const [run] = request.resourceSpans[0].scopeSpans[0].spans;
+
+	assert.equal(run.startTimeUnixNano, '1700000000000000000');
+	assert.equal(run.endTimeUnixNano, '1700000000060000000');
 });
 
 test('an opening X-Ray segment names the caller as its parent', () => {
@@ -289,6 +318,34 @@ test('with HUB_TRACE on, a function continues the message trace and writes it to
 	const publish = g.calls().find((c) => c.url.includes(':publish'))!;
 	const forwarded = JSON.parse(publish.body).messages[0].attributes.googclient_traceparent;
 	assert.equal(forwarded, `00-${W3C}-${run.spanId}-01`);
+});
+
+test('a function with no wire out still writes its span to Cloud Trace, under the publisher', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle((s) => (s.url.startsWith(google.TELEMETRY_TRACES) ? Response.json({}) : Response.json({ messageIds: ['1'] })));
+	const { res, out } = fakeResponse();
+	const before = Date.now();
+
+	await withEnvironment({ NAME: 'listener', HUB_TRACE: 'on' }, () =>
+		withFetch(g.fetchImpl, () => cloudfunctions()({ body: PUSH }, res))
+	);
+
+	assert.equal(out.status, 200);
+	assert.deepEqual((JSON.parse(out.body) as Report).hops, []);
+
+	const telemetry = g.calls().find((c) => c.url === google.TELEMETRY_TRACES);
+	assert.ok(telemetry, 'the end of the chain is in the trace');
+	const all = JSON.parse(telemetry!.body).resourceSpans[0].scopeSpans[0].spans;
+	assert.equal(all.length, 1);
+	const [run] = all;
+	assert.equal(run.traceId, W3C);
+	assert.equal(run.parentSpanId, '53995c3f42cd8ad8');
+	assert.equal(run.name, 'listener');
+	assert.equal(run.kind, 5);
+	const start = BigInt(run.startTimeUnixNano);
+	const end = BigInt(run.endTimeUnixNano);
+	assert.ok(start >= BigInt(before) * 1_000_000n, 'starts when the request arrived');
+	assert.ok(end >= start);
 });
 
 test('a CloudEvent from a trigger on a topic continues the trace the message carries', async () => {

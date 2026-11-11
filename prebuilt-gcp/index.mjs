@@ -5630,26 +5630,36 @@ var Trail = class {
     };
   }
 };
+function bounds(report, run) {
+  if (report.hops.length > 0) {
+    return {
+      start: Math.min(...report.hops.map((hop) => hop.at)),
+      end: Math.max(...report.hops.map((hop) => hop.at + hop.ms))
+    };
+  }
+  return run ? { start: run.at, end: run.at + run.ms } : null;
+}
 var str = (key, value) => ({ key, value: { stringValue: value } });
 var int = (key, value) => ({ key, value: { intValue: String(Math.trunc(value)) } });
 var nanos = (ms) => `${Math.round(ms)}000000`;
 var KIND = { server: 2, client: 3, consumer: 5 };
 var CONSUMED = /^(gcp:pubsub|aws:sqs|aws:sns|aws:kinesis|aws:dynamodb)$/;
-function spans(report, trace, resource) {
-  if (!trace.sampled || report.hops.length === 0)
+function spans(report, trace, resource, run) {
+  if (!trace.sampled)
+    return null;
+  const window = bounds(report, run);
+  if (!window)
     return null;
   const traceId2 = w3cTraceId(trace.root);
   const runId = trace.parent ?? spanId();
-  const starts = report.hops.map((hop) => hop.at);
-  const ends = report.hops.map((hop) => hop.at + hop.ms);
-  const run = {
+  const own = {
     traceId: traceId2,
     spanId: runId,
     ...trace.upstream ? { parentSpanId: trace.upstream } : {},
     name: resource.service,
     kind: CONSUMED.test(report.origin) ? KIND.consumer : KIND.server,
-    startTimeUnixNano: nanos(Math.min(...starts)),
-    endTimeUnixNano: nanos(Math.max(...ends)),
+    startTimeUnixNano: nanos(window.start),
+    endTimeUnixNano: nanos(window.end),
     attributes: [str("struct8.origin", report.origin), int("struct8.dropped", report.dropped)],
     status: report.hops.some((hop) => !hop.ok) ? { code: 2, message: `${report.hops.filter((hop) => !hop.ok).length} of ${report.hops.length} hops failed` } : { code: 0 }
   };
@@ -5675,7 +5685,7 @@ function spans(report, trace, resource) {
             ...Object.entries(resource.attributes).map(([key, value]) => str(key, value))
           ]
         },
-        scopeSpans: [{ scope: { name: "@struct8/hub" }, spans: [run, ...hops] }]
+        scopeSpans: [{ scope: { name: "@struct8/hub" }, spans: [own, ...hops] }]
       }
     ]
   };
@@ -6381,7 +6391,7 @@ function projectOf(project, kind) {
   return project;
 }
 var TELEMETRY_TRACES = "https://telemetry.googleapis.com/v1/traces";
-async function emitTrace(report, trace, self, where, fetchImpl = fetch) {
+async function emitTrace(report, trace, self, where, fetchImpl = fetch, run) {
   if (!trace || !where.project)
     return;
   const request = spans(report, trace, {
@@ -6391,7 +6401,7 @@ async function emitTrace(report, trace, self, where, fetchImpl = fetch) {
       "cloud.provider": "gcp",
       ...where.region ? { "cloud.region": where.region } : {}
     }
-  });
+  }, run);
   if (!request)
     return;
   try {
@@ -6475,6 +6485,7 @@ function traceOf(req, arrival) {
 function cloudfunctions(opts = {}) {
   let neighbors;
   return async function handler2(req, res) {
+    const started = Date.now();
     neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
     const self = env2("NAME") ?? env2("K_SERVICE") ?? "hub";
     const here = await whereAmI(globalThis.fetch);
@@ -6499,13 +6510,14 @@ function cloudfunctions(opts = {}) {
       ...onish(env2("HUB_FAULTS")) ? { faults: { stall: () => new Promise(() => {
       }) } } : {}
     });
+    const run = { at: started, ms: Date.now() - started };
     setTraceHeader(void 0);
     console.log(JSON.stringify({
       hub: report,
       describe: arrival.describe,
       ...trace === void 0 ? {} : { traceId: w3cTraceId(trace.root) }
     }));
-    await emitTrace(report, trace, self, here, globalThis.fetch);
+    await emitTrace(report, trace, self, here, globalThis.fetch, run);
     const failed2 = (report.faults ?? []).length > 0 || REDELIVERED.has(arrival.origin) && report.failed.length > 0;
     const body = JSON.stringify(report);
     if (completes(res)) {

@@ -189,6 +189,10 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 		req: unknown,
 		res: HttpResponse | CloudEventCallback | EventContext
 	): Promise<string | void> {
+		// The run's own timing, which places its span when it delivers nothing (spans in
+		// core/report.ts). The receiver at the end of a chain is such a run.
+		const started = Date.now();
+
 		// Resolved on first request rather than at module load, so that a shim which registers
 		// resources after calling cloudfunctions() still sees a complete vocabulary.
 		neighbors ??= discover(typeof process === 'undefined' ? {} : process.env, registry.vocabulary());
@@ -222,6 +226,7 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 			// request at the function's timeout, which this shim cannot read.
 			...(onish(env('HUB_FAULTS')) ? { faults: { stall: () => new Promise<void>(() => {}) } } : {}),
 		});
+		const run = { at: started, ms: Date.now() - started };
 
 		aws.setTraceHeader(undefined);
 
@@ -236,7 +241,7 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 
 		// Before the answer, and awaited: Cloud Run may throttle the instance's CPU once the response
 		// is sent, and a request still in flight then may never leave.
-		await google.emitTrace(report, trace, self, here, globalThis.fetch);
+		await google.emitTrace(report, trace, self, here, globalThis.fetch, run);
 
 		// 200 even when a wire failed, as on Lambda's HTTP sources: the report is the result, and
 		// `hops[].ok` names the wire and the reason. Two exceptions. A message that asked to fail

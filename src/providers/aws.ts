@@ -18,7 +18,7 @@
 import { AwsClient } from 'aws4fetch';
 
 import { segments } from '../core/report.js';
-import type { Report, TraceContext } from '../core/types.js';
+import type { Report, RunTiming, TraceContext } from '../core/types.js';
 
 export interface AwsCredentials {
 	readonly accessKeyId: string;
@@ -362,17 +362,21 @@ export async function putTraceSegments(
  * The reason is logged rather than swallowed, because the failure that matters is the likely one:
  * `AccessDenied` until the execution role carries `xray:PutTraceSegments`, which the diagram does
  * not grant today.
+ *
+ * `run` is the runtime's timing of the run, which places the segment of a container run with no
+ * hops (`segments`).
  */
 export async function emitTrace(
 	report: Report,
 	trace: TraceContext | undefined,
 	self: string,
 	region: string | undefined,
-	fetchImpl: typeof fetch = fetch
+	fetchImpl: typeof fetch = fetch,
+	run?: RunTiming
 ): Promise<void> {
 	if (!trace || !region) return;
 
-	const documents = segments(report, trace, self);
+	const documents = segments(report, trace, self, run);
 	if (documents.length === 0) return;
 
 	try {

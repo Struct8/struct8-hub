@@ -5652,6 +5652,15 @@ var Trail = class {
   }
 };
 var seconds = (ms) => ms / 1e3;
+function bounds(report, run) {
+  if (report.hops.length > 0) {
+    return {
+      start: Math.min(...report.hops.map((hop) => hop.at)),
+      end: Math.max(...report.hops.map((hop) => hop.at + hop.ms))
+    };
+  }
+  return run ? { start: run.at, end: run.at + run.ms } : null;
+}
 function subsegment(hop, trace) {
   return {
     id: spanId(),
@@ -5671,14 +5680,15 @@ function subsegment(hop, trace) {
     }
   };
 }
-function segments(report, trace, self) {
-  if (!trace.sampled || report.hops.length === 0)
+function segments(report, trace, self, run) {
+  if (!trace.sampled)
     return [];
   if (trace.parent && !trace.opens) {
     return report.hops.map((hop) => JSON.stringify({ ...subsegment(hop, trace), type: "subsegment", parent_id: trace.parent }));
   }
-  const starts = report.hops.map((hop) => hop.at);
-  const ends = report.hops.map((hop) => hop.at + hop.ms);
+  const window = bounds(report, run);
+  if (!window)
+    return [];
   return [
     JSON.stringify({
       // The id the runtime already handed downstream, when it had one. Minting a fresh one here
@@ -5688,8 +5698,8 @@ function segments(report, trace, self) {
       trace_id: trace.root,
       // The caller's span, so the console draws the line from it to this one.
       ...trace.upstream ? { parent_id: trace.upstream } : {},
-      start_time: seconds(Math.min(...starts)),
-      end_time: seconds(Math.max(...ends)),
+      start_time: seconds(window.start),
+      end_time: seconds(window.end),
       annotations: { origin: report.origin, dropped: report.dropped },
       ...report.hops.some((hop) => !hop.ok) ? { error: true } : {},
       subsegments: report.hops.map((hop) => subsegment(hop, trace))
@@ -6153,10 +6163,10 @@ async function putTraceSegments(region, documents, fetchImpl = fetch) {
   }
   return unprocessed;
 }
-async function emitTrace(report, trace, self, region, fetchImpl = fetch) {
+async function emitTrace(report, trace, self, region, fetchImpl = fetch, run) {
   if (!trace || !region)
     return;
-  const documents = segments(report, trace, self);
+  const documents = segments(report, trace, self, run);
   if (documents.length === 0)
     return;
   try {

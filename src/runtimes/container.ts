@@ -31,7 +31,7 @@ import { handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
 import { credentials, emitTrace, setTraceHeader } from '../providers/aws.js';
 import type { AwsCredentials } from '../providers/aws.js';
-import type { Ctx, Neighbor, Report, TraceContext } from '../core/types.js';
+import type { Ctx, Neighbor, Report, RunTiming, TraceContext } from '../core/types.js';
 import { onish } from './flags.js';
 
 /** The link-local address ECS answers the credential request on. Fixed by AWS, not configurable. */
@@ -598,10 +598,13 @@ export function container(opts: ContainerOptions = {}): Server {
 	 * The header is module state in the provider, and the poll loop and the HTTP server share this
 	 * process: leaving one run's trace set would stamp the next run's requests with it, and two
 	 * requests would merge into one trace in the console.
+	 *
+	 * `run` places the segment of a run that delivered nothing. Only a request passes it: a poll's
+	 * timing includes the wait for the queue, which the trace leaves out on purpose (see `loop`).
 	 */
-	const finish = async (report: Report, trace: TraceContext | undefined): Promise<void> => {
+	const finish = async (report: Report, trace: TraceContext | undefined, run?: RunTiming): Promise<void> => {
 		try {
-			await emitTrace(report, trace, context(trace).self, ownRegion(), fetchImpl);
+			await emitTrace(report, trace, context(trace).self, ownRegion(), fetchImpl, run);
 		} finally {
 			setTraceHeader(undefined);
 		}
@@ -641,6 +644,7 @@ export function container(opts: ContainerOptions = {}): Server {
 			return;
 		}
 
+		const started = Date.now();
 		const body = await readBody(req, opts.maxBodyBytes ?? MAX_BODY_BYTES);
 		await ensureCredentials(env, fetchImpl);
 
@@ -656,9 +660,10 @@ export function container(opts: ContainerOptions = {}): Server {
 			// next request's calls with a trace nobody wrote.
 			setTraceHeader(undefined);
 		}
+		const run = { at: started, ms: Date.now() - started };
 
 		console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
-		await finish(report, trace);
+		await finish(report, trace, run);
 
 		// 200 even when hops failed. The report *is* the answer, and a failed wire is a fact it
 		// carries, not a transport error — answering 5xx would make the load balancer treat a

@@ -176,6 +176,38 @@ test('nothing is built when nothing is being recorded, or when nothing happened'
 	assert.deepEqual(segments(report([]), LAMBDA, 'api-handler'), []);
 });
 
+/** The runtime's timing of a run: 35 ms from AT. */
+const RUN = { at: AT, ms: 35 };
+
+test('in a container a run with no hops still writes its segment, placed by its own timing', () => {
+	const docs = parsed(segments(report([]), CONTAINER, 'hub_1', RUN));
+
+	assert.equal(docs.length, 1);
+	const segment = docs[0]!;
+	assert.equal(segment['name'], 'hub_1');
+	assert.equal(segment['id'], CONTAINER.parent);
+	assert.equal(segment['start_time'], 1_700_000_000);
+	assert.equal(segment['end_time'], 1_700_000_000.035);
+	assert.deepEqual(segment['subsegments'], []);
+	assert.equal('error' in segment, false);
+
+	// Without the timing there is nothing to place the segment by.
+	assert.deepEqual(segments(report([]), CONTAINER, 'hub_1'), []);
+	assert.deepEqual(segments(report([]), { ...CONTAINER, sampled: false }, 'hub_1', RUN), []);
+});
+
+test('on Lambda a run with no hops writes nothing, because the service wrote the invocation segment', () => {
+	assert.deepEqual(segments(report([]), LAMBDA, 'api-handler', RUN), []);
+});
+
+test('a run with hops is placed by its hops, whatever the runtime timed', () => {
+	const hops = report([hop(), hop({ n: 2, at: AT + 120, ms: 80 })]);
+	const [timed] = parsed(segments(hops, CONTAINER, 'hub_1', { at: AT - 500, ms: 5_000 }));
+
+	assert.equal(timed?.['start_time'], 1_700_000_000);
+	assert.equal(timed?.['end_time'], 1_700_000_000.2);
+});
+
 // ---------------------------------------------------------------------------
 // Getting the trace to the next workload
 // ---------------------------------------------------------------------------
@@ -252,6 +284,7 @@ test('nothing is sent without a trace, without a region, or without hops', async
 		['no trace', (f) => aws.emitTrace(report([hop()]), undefined, 'api-handler', 'us-west-2', f)],
 		['no region', (f) => aws.emitTrace(report([hop()]), LAMBDA, 'api-handler', undefined, f)],
 		['no hops', (f) => aws.emitTrace(report([]), LAMBDA, 'api-handler', 'us-west-2', f)],
+		['no hops on Lambda, with the run timed', (f) => aws.emitTrace(report([]), LAMBDA, 'api-handler', 'us-west-2', f, RUN)],
 		['not sampled', (f) => aws.emitTrace(report([hop()]), { ...LAMBDA, sampled: false }, 'api-handler', 'us-west-2', f)],
 	];
 
@@ -261,6 +294,17 @@ test('nothing is sent without a trace, without a region, or without hops', async
 		// A request here would be a billed trace for a run that asked for none.
 		assert.equal(seen.length, 0, `sent something with ${why}`);
 	}
+});
+
+test('a container run with no hops sends its segment to X-Ray', async () => {
+	const { seen, fetchImpl } = capture();
+	await aws.emitTrace(report([]), CONTAINER, 'hub_1', 'us-west-2', fetchImpl, RUN);
+
+	assert.equal(seen.length, 1);
+	const body = JSON.parse(await seen[0]!.text()) as { TraceSegmentDocuments: string[] };
+	const segment = JSON.parse(body.TraceSegmentDocuments[0]!);
+	assert.equal(segment['id'], CONTAINER.parent);
+	assert.equal(segment['start_time'], 1_700_000_000);
 });
 
 test('a rejected document is reported rather than swallowed', async () => {

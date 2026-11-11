@@ -27,6 +27,13 @@ AWS account.
   response: it found no body, skipped the topic's receiver, started another trace, and threw
   `res.status is not a function` at the end. Measured on a live project on 2026-11-05. The runtime
   now tells the `http`, `event` and `cloudevent` signatures apart by the second argument.
+- A run that delivers nothing is in the trace. A Cloud Function with no wire out, such as the
+  receiver at the end of a chain, wrote no span: the span of a run was placed by its hops, and it had
+  none. Read in the Cloud Trace console on 2026-11-11, in a trace of 2026-11-05 where the topic's
+  receiver ran and does not appear. The runtime now times the run, and `spans` places a run with no
+  hops by that timing (`RunTiming` in `core/types.ts`). A container answering a request writes its
+  X-Ray segment the same way. Lambda is unchanged, because the service writes the invocation
+  segment. A container's poll is not timed, because its timing includes the wait for the queue.
 
 ### Added
 
@@ -42,7 +49,10 @@ AWS account.
   span of its own under the trace it received (the message's, the header's, or the envelope's),
   and `providers/google.ts` sends the run and its hops to Cloud Trace as OTLP JSON through the
   Telemetry API (`core/report.ts`, `spans`). An opening X-Ray segment now names its caller in
-  `parent_id` when the run knows it (`TraceContext.upstream`). Nothing has run against Google yet.
+  `parent_id` when the run knows it (`TraceContext.upstream`). Run on a live project on 2026-11-05
+  and read in the Cloud Trace console on 2026-11-11: the spans of two functions and of their hops
+  (an HTTP call, a bucket, a topic) are in one trace, beside the spans Cloud Run writes for each
+  request it receives.
 - **Contract v1.3**: traces across workloads and clouds (§6.3), and `HUB_TRACE` on a Google
   Cloud function.
 - A workload on AWS reaches Google Cloud with no Google key: `providers/googleFederation.ts`
