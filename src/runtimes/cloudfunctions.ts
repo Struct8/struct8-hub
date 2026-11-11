@@ -28,7 +28,16 @@
  */
 
 import { discover } from '../core/discovery.js';
-import { isTraceId, parseTraceparent, read, spanId, traceHeader, traceId, w3cTraceId } from '../core/envelope.js';
+import {
+	isEnvelope,
+	isTraceId,
+	parseTraceparent,
+	read,
+	spanId,
+	traceHeader,
+	traceId,
+	w3cTraceId,
+} from '../core/envelope.js';
 import { handle, normalize } from '../core/hub.js';
 import * as registry from '../core/registry.js';
 import * as aws from '../providers/aws.js';
@@ -131,6 +140,23 @@ function delivered(first: unknown, second: unknown): unknown {
 }
 
 /**
+ * What arrived, as the core reads it.
+ *
+ * A Hub envelope in the body of an HTTP request is another Hub calling this one over HTTP
+ * (resources/google_cloudfunctions2_function and google_cloud_run_v2_service send it that way),
+ * and it is claimed here as `gcp:http`. The receivers would claim it too, but the one that knows a
+ * parsed envelope is Lambda's (resources/aws_lambda_function): it names the arrival `aws:lambda`,
+ * and on Google the report and the run's span then said the message came from AWS.
+ */
+async function arrivalOf(first: unknown, second: unknown): Promise<Arrival> {
+	const raw = delivered(first, second);
+	if (answersHttp(second) && isEnvelope(raw)) {
+		return { origin: 'gcp:http', describe: 'invoked by another workload', items: [{ body: JSON.stringify(raw) }] };
+	}
+	return normalize(raw);
+}
+
+/**
  * Reads whether to send traces to Cloud Trace.
  *
  * A variable, as in a container (runtimes/container.ts), and for the same reason: there is no
@@ -202,7 +228,7 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 		const self = env('NAME') ?? env('K_SERVICE') ?? 'hub';
 		const here = await google.whereAmI(globalThis.fetch);
 
-		const arrival = await normalize(delivered(req, res));
+		const arrival = await arrivalOf(req, res);
 		const trace = traceOf(req as HttpRequest, arrival);
 
 		const ctx: Ctx = {
@@ -225,6 +251,8 @@ export function cloudfunctions(opts: CloudFunctionsOptions = {}) {
 			// Waiting out the deadline, for a message that asked for `slow`: the platform ends the
 			// request at the function's timeout, which this shim cannot read.
 			...(onish(env('HUB_FAULTS')) ? { faults: { stall: () => new Promise<void>(() => {}) } } : {}),
+			// Each delivery names its own span as the parent of what it calls, on AWS as well.
+			propagate: (t) => aws.setTraceHeader(traceHeader(t)),
 		});
 		const run = { at: started, ms: Date.now() - started };
 

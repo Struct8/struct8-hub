@@ -369,16 +369,20 @@ const sqs = (seen: Request[]): Request[] => seen.filter((r) => new URL(r.url).ho
 test('a sampled invocation forwards the trace and reports its trail', async () => {
 	const seen = await invoke(`Root=${LAMBDA.root};Parent=${LAMBDA.parent};Sampled=1`);
 
-	const message = JSON.parse(await sqs(seen)[0]!.text()) as Record<string, any>;
-	assert.equal(message['MessageSystemAttributes']?.AWSTraceHeader?.StringValue, traceHeader(LAMBDA));
-	assert.equal(sqs(seen)[0]?.headers.get('x-amzn-trace-id'), traceHeader(LAMBDA));
-
 	const documents = JSON.parse(await xray(seen)[0]!.text()) as { TraceSegmentDocuments: string[] };
 	const subsegment = JSON.parse(documents.TraceSegmentDocuments[0]!) as Record<string, any>;
 	// The platform's trace id, not one of ours. The invocation segment is already filed under it.
 	assert.equal(subsegment['trace_id'], LAMBDA.root);
 	assert.equal(subsegment['parent_id'], LAMBDA.parent);
 	assert.equal(subsegment['name'], 'order-processing');
+
+	// The delivery names its own subsegment, so the consumer hangs under the send to the queue and
+	// not beside it, under the invocation.
+	assert.notEqual(subsegment['id'], LAMBDA.parent);
+	const forwarded = traceHeader({ ...LAMBDA, parent: subsegment['id'] });
+	const message = JSON.parse(await sqs(seen)[0]!.text()) as Record<string, any>;
+	assert.equal(message['MessageSystemAttributes']?.AWSTraceHeader?.StringValue, forwarded);
+	assert.equal(sqs(seen)[0]?.headers.get('x-amzn-trace-id'), forwarded);
 });
 
 test('an unsampled invocation sends the message it always sent, and no trace', async () => {

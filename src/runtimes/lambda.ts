@@ -172,6 +172,8 @@ export function lambda(opts: LambdaOptions = {}) {
 			// invocation segment is already filed under this one.
 			...(trace === null ? {} : { trace: trace.root }),
 			...(faultsEnabled() ? { faults: { stall: stall(context) } } : {}),
+			// Each delivery names its own subsegment as the parent of what it calls.
+			propagate: (t) => aws.setTraceHeader(traceHeader(t)),
 		});
 
 		console.log(JSON.stringify({ hub: report, describe: arrival.describe }));

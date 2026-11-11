@@ -386,7 +386,7 @@ export async function consumeOnce(
 	source: Neighbor,
 	targets: readonly Neighbor[],
 	ctx: Ctx,
-	opts: { readonly hops?: number } = {}
+	opts: { readonly hops?: number; readonly propagate?: (trace: TraceContext) => void } = {}
 ): Promise<Report | null> {
 	const consume = registry.get(source.type)?.consume;
 	if (!consume) throw new Error(`resource ${source.type} cannot be consumed`);
@@ -394,7 +394,10 @@ export async function consumeOnce(
 	const batch = await consume(source, ctx);
 	if (batch.items.length === 0) return null;
 
-	const report = await handle(batch, targets, ctx, opts.hops === undefined ? {} : { hops: opts.hops });
+	const report = await handle(batch, targets, ctx, {
+		...(opts.hops === undefined ? {} : { hops: opts.hops }),
+		...(opts.propagate === undefined ? {} : { propagate: opts.propagate }),
+	});
 
 	// Only what was forwarded. An item that ran out of hops is not in `failed` and is acknowledged
 	// on purpose: redelivering it would drop it again, forever.
@@ -602,6 +605,9 @@ export function container(opts: ContainerOptions = {}): Server {
 	 * `run` places the segment of a run that delivered nothing. Only a request passes it: a poll's
 	 * timing includes the wait for the queue, which the trace leaves out on purpose (see `loop`).
 	 */
+	/** The header each delivery carries: its own subsegment as the parent of what it calls. */
+	const stamp = (trace: TraceContext): void => setTraceHeader(traceHeader(trace));
+
 	const finish = async (report: Report, trace: TraceContext | undefined, run?: RunTiming): Promise<void> => {
 		try {
 			await emitTrace(report, trace, context(trace).self, ownRegion(), fetchImpl, run);
@@ -654,7 +660,10 @@ export function container(opts: ContainerOptions = {}): Server {
 		const arrival = await normalize(body);
 		let report: Report;
 		try {
-			report = await handle(arrival, wired(), context(trace), opts.hops === undefined ? {} : { hops: opts.hops });
+			report = await handle(arrival, wired(), context(trace), {
+				...(opts.hops === undefined ? {} : { hops: opts.hops }),
+				propagate: stamp,
+			});
 		} finally {
 			// Cleared however this went: a request that threw with the header still set would stamp the
 			// next request's calls with a trace nobody wrote.
@@ -725,12 +734,10 @@ export function container(opts: ContainerOptions = {}): Server {
 
 				let report: Report | null = null;
 				try {
-					report = await consumeOnce(
-						source,
-						targets,
-						context(trace),
-						opts.hops === undefined ? {} : { hops: opts.hops }
-					);
+					report = await consumeOnce(source, targets, context(trace), {
+						...(opts.hops === undefined ? {} : { hops: opts.hops }),
+						propagate: stamp,
+					});
 				} finally {
 					// Cleared on the way out however this went. A poll that threw with the header still
 					// set would stamp the next poll's requests with a trace that was never written.

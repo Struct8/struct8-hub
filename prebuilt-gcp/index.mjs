@@ -5574,14 +5574,14 @@ var Trail = class {
    * the difference between a report saying "three of four arrived" and an invocation that dies
    * on the first failure and tells you nothing about the rest.
    */
-  async record(neighbor, itemId, deliver) {
+  async record(neighbor, itemId, deliver, span) {
     const started = this.now();
     try {
       await deliver();
-      this.#push(neighbor, started, true);
+      this.#push(neighbor, started, true, void 0, span);
       return true;
     } catch (err) {
-      this.#push(neighbor, started, false, reason(err));
+      this.#push(neighbor, started, false, reason(err), span);
       if (itemId !== void 0)
         this.#failed.add(itemId);
       return false;
@@ -5607,7 +5607,7 @@ var Trail = class {
     if (itemId !== void 0)
       this.#failed.add(itemId);
   }
-  #push(neighbor, started, ok, err) {
+  #push(neighbor, started, ok, err, span) {
     this.#hops.push({
       n: this.#hops.length + 1,
       to: displayName(neighbor),
@@ -5616,7 +5616,8 @@ var Trail = class {
       ok,
       ms: this.now() - started,
       at: started,
-      ...err === void 0 ? {} : { err }
+      ...err === void 0 ? {} : { err },
+      ...span === void 0 ? {} : { span }
     });
   }
   done() {
@@ -5665,7 +5666,8 @@ function spans(report, trace, resource, run) {
   };
   const hops = report.hops.map((hop) => ({
     traceId: traceId2,
-    spanId: spanId(),
+    // The id the delivery already named as its receiver's parent (core/hub.ts).
+    spanId: hop.span ?? spanId(),
     parentSpanId: runId,
     name: hop.to,
     kind: KIND.client,
@@ -5726,7 +5728,11 @@ async function handle(arrival, neighbors, ctx, opts = {}) {
     }
     for (const neighbor of reachable) {
       const send2 = get(neighbor.type).send;
-      await trail.record(neighbor, item.id, () => send2(neighbor, outgoing, ctx));
+      const span = ctx.trace ? spanId() : void 0;
+      const via = span ? { ...ctx, trace: { ...ctx.trace, parent: span } } : ctx;
+      if (via.trace)
+        opts.propagate?.(via.trace);
+      await trail.record(neighbor, item.id, () => send2(neighbor, outgoing, via), span);
     }
   }
   return trail.done();
@@ -6464,6 +6470,13 @@ function delivered(first, second) {
     return eventOf(first);
   return eventOfContext(first, second);
 }
+async function arrivalOf(first, second) {
+  const raw = delivered(first, second);
+  if (answersHttp(second) && isEnvelope(raw)) {
+    return { origin: "gcp:http", describe: "invoked by another workload", items: [{ body: JSON.stringify(raw) }] };
+  }
+  return normalize(raw);
+}
 var tracingEnabled = () => onish(env2("HUB_TRACE"));
 function header(req, name) {
   const value = req.headers?.[name];
@@ -6489,7 +6502,7 @@ function cloudfunctions(opts = {}) {
     neighbors ??= discover(typeof process === "undefined" ? {} : process.env, vocabulary());
     const self = env2("NAME") ?? env2("K_SERVICE") ?? "hub";
     const here = await whereAmI(globalThis.fetch);
-    const arrival = await normalize(delivered(req, res));
+    const arrival = await arrivalOf(req, res);
     const trace = traceOf(req, arrival);
     const ctx = {
       self,
@@ -6508,7 +6521,9 @@ function cloudfunctions(opts = {}) {
       // Waiting out the deadline, for a message that asked for `slow`: the platform ends the
       // request at the function's timeout, which this shim cannot read.
       ...onish(env2("HUB_FAULTS")) ? { faults: { stall: () => new Promise(() => {
-      }) } } : {}
+      }) } } : {},
+      // Each delivery names its own span as the parent of what it calls, on AWS as well.
+      propagate: (t) => setTraceHeader(traceHeader(t))
     });
     const run = { at: started, ms: Date.now() - started };
     setTraceHeader(void 0);

@@ -45,14 +45,19 @@ export class Trail {
 	 * the difference between a report saying "three of four arrived" and an invocation that dies
 	 * on the first failure and tells you nothing about the rest.
 	 */
-	async record(neighbor: Neighbor, itemId: string | undefined, deliver: () => Promise<void>): Promise<boolean> {
+	async record(
+		neighbor: Neighbor,
+		itemId: string | undefined,
+		deliver: () => Promise<void>,
+		span?: string
+	): Promise<boolean> {
 		const started = this.now();
 		try {
 			await deliver();
-			this.#push(neighbor, started, true);
+			this.#push(neighbor, started, true, undefined, span);
 			return true;
 		} catch (err) {
-			this.#push(neighbor, started, false, reason(err));
+			this.#push(neighbor, started, false, reason(err), span);
 			if (itemId !== undefined) this.#failed.add(itemId);
 			return false;
 		}
@@ -79,7 +84,7 @@ export class Trail {
 		if (itemId !== undefined) this.#failed.add(itemId);
 	}
 
-	#push(neighbor: Neighbor, started: number, ok: boolean, err?: string): void {
+	#push(neighbor: Neighbor, started: number, ok: boolean, err?: string, span?: string): void {
 		this.#hops.push({
 			n: this.#hops.length + 1,
 			to: displayName(neighbor),
@@ -89,6 +94,7 @@ export class Trail {
 			ms: this.now() - started,
 			at: started,
 			...(err === undefined ? {} : { err }),
+			...(span === undefined ? {} : { span }),
 		});
 	}
 
@@ -147,7 +153,8 @@ function bounds(report: Report, run: RunTiming | undefined): { start: number; en
  */
 function subsegment(hop: Hop, trace: TraceContext): Document {
 	return {
-		id: spanId(),
+		// The id the delivery already named as its receiver's parent (core/hub.ts).
+		id: hop.span ?? spanId(),
 		name: hop.to,
 		start_time: seconds(hop.at),
 		end_time: seconds(hop.at + hop.ms),
@@ -292,7 +299,8 @@ export function spans(
 
 	const hops = report.hops.map((hop) => ({
 		traceId,
-		spanId: spanId(),
+		// The id the delivery already named as its receiver's parent (core/hub.ts).
+		spanId: hop.span ?? spanId(),
 		parentSpanId: runId,
 		name: hop.to,
 		kind: KIND.client,

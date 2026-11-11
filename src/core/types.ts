@@ -268,6 +268,15 @@ export interface Hop {
 	 */
 	readonly at: number;
 	readonly err?: string;
+	/**
+	 * The id of this attempt's own span (an X-Ray subsegment, an OTLP client span), when the run is
+	 * being recorded.
+	 *
+	 * Minted before the delivery leaves, because the delivery names it as the parent of whatever
+	 * receives it. A receiver that names the run's span instead hangs beside this attempt in the
+	 * console rather than under it.
+	 */
+	readonly span?: string;
 }
 
 /**

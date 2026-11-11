@@ -6,11 +6,11 @@
  * loop control, partial failure — be tested against fake senders in milliseconds.
  */
 
-import { advance, open, read, seal, traceId } from './envelope.js';
+import { advance, open, read, seal, spanId, traceId } from './envelope.js';
 import { directive, fails, spelled } from './faults.js';
 import * as registry from './registry.js';
 import { Trail } from './report.js';
-import type { Arrival, Ctx, Envelope, Neighbor, Report } from './types.js';
+import type { Arrival, Ctx, Envelope, Neighbor, Report, TraceContext } from './types.js';
 
 export interface HandleOptions {
 	/** Injectable so reports are deterministic under test. */
@@ -27,6 +27,13 @@ export interface HandleOptions {
 		/** Waits out the invocation, for `slow`. On a platform with a deadline it never returns. */
 		readonly stall: () => Promise<void>;
 	};
+	/**
+	 * Called before each delivery with the trace that delivery carries: the run's, with `parent`
+	 * set to the delivery's own span. For a provider that stamps the trace from module state rather
+	 * than from the context (`setTraceHeader` in providers/aws.ts). Not called when nothing is
+	 * recording.
+	 */
+	readonly propagate?: (trace: TraceContext) => void;
 }
 
 /**
@@ -100,7 +107,13 @@ export async function handle(
 		// worth more here than the milliseconds concurrency would save.
 		for (const neighbor of reachable) {
 			const send = registry.get(neighbor.type)!.send!;
-			await trail.record(neighbor, item.id, () => send(neighbor, outgoing, ctx));
+			// The delivery's own span, minted before it leaves: the sender names it as the parent of
+			// whatever receives the message, so the receiver hangs under this delivery in the console
+			// and not beside it, under the run.
+			const span = ctx.trace ? spanId() : undefined;
+			const via: Ctx = span ? { ...ctx, trace: { ...ctx.trace!, parent: span } } : ctx;
+			if (via.trace) opts.propagate?.(via.trace);
+			await trail.record(neighbor, item.id, () => send(neighbor, outgoing, via), span);
 		}
 	}
 

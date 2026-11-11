@@ -5595,14 +5595,14 @@ var Trail = class {
    * the difference between a report saying "three of four arrived" and an invocation that dies
    * on the first failure and tells you nothing about the rest.
    */
-  async record(neighbor, itemId, deliver) {
+  async record(neighbor, itemId, deliver, span) {
     const started = this.now();
     try {
       await deliver();
-      this.#push(neighbor, started, true);
+      this.#push(neighbor, started, true, void 0, span);
       return true;
     } catch (err) {
-      this.#push(neighbor, started, false, reason(err));
+      this.#push(neighbor, started, false, reason(err), span);
       if (itemId !== void 0)
         this.#failed.add(itemId);
       return false;
@@ -5628,7 +5628,7 @@ var Trail = class {
     if (itemId !== void 0)
       this.#failed.add(itemId);
   }
-  #push(neighbor, started, ok, err) {
+  #push(neighbor, started, ok, err, span) {
     this.#hops.push({
       n: this.#hops.length + 1,
       to: displayName(neighbor),
@@ -5637,7 +5637,8 @@ var Trail = class {
       ok,
       ms: this.now() - started,
       at: started,
-      ...err === void 0 ? {} : { err }
+      ...err === void 0 ? {} : { err },
+      ...span === void 0 ? {} : { span }
     });
   }
   done() {
@@ -5663,7 +5664,8 @@ function bounds(report, run) {
 }
 function subsegment(hop, trace) {
   return {
-    id: spanId(),
+    // The id the delivery already named as its receiver's parent (core/hub.ts).
+    id: hop.span ?? spanId(),
     name: hop.to,
     start_time: seconds(hop.at),
     end_time: seconds(hop.at + hop.ms),
@@ -5742,7 +5744,11 @@ async function handle(arrival, neighbors, ctx, opts = {}) {
     }
     for (const neighbor of reachable) {
       const send2 = get(neighbor.type).send;
-      await trail.record(neighbor, item.id, () => send2(neighbor, outgoing, ctx));
+      const span = ctx.trace ? spanId() : void 0;
+      const via = span ? { ...ctx, trace: { ...ctx.trace, parent: span } } : ctx;
+      if (via.trace)
+        opts.propagate?.(via.trace);
+      await trail.record(neighbor, item.id, () => send2(neighbor, outgoing, via), span);
     }
   }
   return trail.done();
@@ -6239,7 +6245,9 @@ function lambda(opts = {}) {
       // The platform's trace id wins over the envelope's, which is what `handle` documents. The
       // invocation segment is already filed under this one.
       ...trace === null ? {} : { trace: trace.root },
-      ...faultsEnabled() ? { faults: { stall: stall(context) } } : {}
+      ...faultsEnabled() ? { faults: { stall: stall(context) } } : {},
+      // Each delivery names its own subsegment as the parent of what it calls.
+      propagate: (t) => setTraceHeader(traceHeader(t))
     });
     console.log(JSON.stringify({ hub: report, describe: arrival.describe }));
     await emitTrace(report, trace ?? void 0, self, ownRegion, globalThis.fetch);

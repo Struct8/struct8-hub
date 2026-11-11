@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import '../dist/resources/index.js';
 import * as registry from '../dist/core/registry.js';
-import { open, parseTraceparent, traceparent, w3cTraceId, xrayRoot } from '../dist/core/envelope.js';
+import { open, parseTraceparent, seal, traceparent, w3cTraceId, xrayRoot } from '../dist/core/envelope.js';
 import { segments, spans } from '../dist/core/report.js';
 import * as google from '../dist/providers/google.js';
 import { cloudfunctions } from '../dist/runtimes/cloudfunctions.js';
@@ -310,14 +310,42 @@ test('with HUB_TRACE on, a function continues the message trace and writes it to
 		request.resourceSpans[0].resource.attributes.map((a: any) => [a.key, a.value.stringValue])
 	);
 	assert.deepEqual(attrs, { 'service.name': 'relay', 'gcp.project_id': 'my-project', 'cloud.provider': 'gcp', 'cloud.region': 'us-central1' });
-	const [run] = request.resourceSpans[0].scopeSpans[0].spans;
+	const [run, hop] = request.resourceSpans[0].scopeSpans[0].spans;
 	assert.equal(run.traceId, W3C);
 	assert.equal(run.parentSpanId, '53995c3f42cd8ad8');
+	assert.equal(hop.parentSpanId, run.spanId);
 
-	// The next message names THIS run's span as its parent, so the chain goes on from here.
+	// The next message names the span of THIS publish as its parent, so the receiver hangs under
+	// the publish and not beside it, under the run.
 	const publish = g.calls().find((c) => c.url.includes(':publish'))!;
 	const forwarded = JSON.parse(publish.body).messages[0].attributes.googclient_traceparent;
-	assert.equal(forwarded, `00-${W3C}-${run.spanId}-01`);
+	assert.equal(forwarded, `00-${W3C}-${hop.spanId}-01`);
+	assert.equal((JSON.parse(out.body) as Report).hops[0]?.span, hop.spanId, 'the report names the span of each hop');
+});
+
+test('a Hub calling a function over HTTP arrives as gcp:http and hangs under the call', async () => {
+	google.resetCredentials();
+	const g = fakeGoogle((s) => (s.url.startsWith(google.TELEMETRY_TRACES) ? Response.json({}) : Response.json({})));
+	const { res, out } = fakeResponse();
+
+	// The body another Hub sends (resources/google_cloudfunctions2_function), already parsed by the
+	// Functions Framework, and the traceparent that names the caller's span of that call.
+	await withEnvironment({ NAME: 'worker', HUB_TRACE: 'on' }, () =>
+		withFetch(g.fetchImpl, () =>
+			cloudfunctions()({ body: JSON.parse(seal(ENVELOPE)), headers: { traceparent: `00-${W3C}-53995c3f42cd8ad8-01` } }, res)
+		)
+	);
+
+	const report = JSON.parse(out.body) as Report;
+	assert.equal(report.origin, 'gcp:http', 'not aws:lambda: the call came over HTTP, on Google');
+	assert.equal(report.trace, ROOT);
+
+	const request = JSON.parse(g.calls().find((c) => c.url === google.TELEMETRY_TRACES)!.body);
+	const [run] = request.resourceSpans[0].scopeSpans[0].spans;
+	assert.equal(run.parentSpanId, '53995c3f42cd8ad8');
+	assert.equal(run.kind, 2, 'a request it answers: server');
+	const origin = run.attributes.find((a: any) => a.key === 'struct8.origin');
+	assert.equal(origin.value.stringValue, 'gcp:http');
 });
 
 test('a function with no wire out still writes its span to Cloud Trace, under the publisher', async () => {

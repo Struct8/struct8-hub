@@ -34,6 +34,18 @@ AWS account.
   hops by that timing (`RunTiming` in `core/types.ts`). A container answering a request writes its
   X-Ray segment the same way. Lambda is unchanged, because the service writes the invocation
   segment. A container's poll is not timed, because its timing includes the wait for the queue.
+- What a delivery reaches hangs under the delivery in the trace, not beside it. The trace a sender
+  passes on (`traceparent`, the X-Ray header, `AWSTraceHeader`, EventBridge's `TraceHeader`) named
+  the run's span, so the receiver's span sat next to the call that reached it. Read in the Cloud
+  Trace console on 2026-11-11, in trace `3cdb473810d97ab16197c68f7c771bdb`: `/cross-worker` beside
+  the HTTPS call to it, both under `cross-gateway`. `handle` now mints each delivery's span before
+  it leaves and hands senders the trace with that span as the parent; the hop carries it as `span`,
+  and the subsegment or client span is written with that id. A runtime that stamps the X-Ray header
+  from module state passes `propagate`, which `handle` calls before each delivery.
+- A Hub called by another Hub over HTTP on Google reports `gcp:http`, not `aws:lambda`. The receiver
+  that recognises a parsed envelope is Lambda's, and the Functions Framework parses the body, so the
+  report and the run's span said the message came from AWS. The Cloud Functions runtime claims the
+  envelope itself when the request is HTTP.
 
 ### Added
 

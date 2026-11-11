@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { handle, normalize, ack } from '../dist/core/hub.js';
 import { open, read, seal } from '../dist/core/envelope.js';
 import * as registry from '../dist/core/registry.js';
-import type { Arrival, Ctx, Envelope, Neighbor } from '../dist/core/types.js';
+import type { Arrival, Ctx, Envelope, Neighbor, TraceContext } from '../dist/core/types.js';
 
 beforeEach(() => registry.reset());
 
@@ -191,4 +191,53 @@ test('normalize asks each receiver and falls back to a direct invocation', async
 	const unclaimed = await normalize({ hello: 'world' });
 	assert.equal(unclaimed.origin, 'direct');
 	assert.equal(unclaimed.items[0]?.body, '{"hello":"world"}');
+});
+
+/** Registers a sender that records the trace each delivery was handed. */
+function traced(type: string) {
+	const seen: (TraceContext | undefined)[] = [];
+	registry.register({
+		type,
+		async send(_n, _e, ctx) {
+			seen.push(ctx.trace);
+		},
+	});
+	return seen;
+}
+
+const RECORDING: TraceContext = { root: '1-5759e988-bd862e3fe1be46a994272793', parent: '53995c3f42cd8ad8', sampled: true };
+
+test('while recording, each delivery names its own span as the parent of what it calls', async () => {
+	const queue = traced('aws_sqs_queue');
+	const bucket = traced('aws_s3_bucket');
+	const propagated: TraceContext[] = [];
+
+	const report = await handle(
+		arrival([{ body: 'one' }]),
+		[neighbor('aws_sqs_queue', '0', 'Q'), neighbor('aws_s3_bucket', '0', 'B')],
+		{ ...CTX, trace: RECORDING },
+		{ propagate: (t) => propagated.push(t) }
+	);
+
+	const [toQueue, toBucket] = report.hops;
+	assert.match(toQueue!.span!, /^[0-9a-f]{16}$/);
+	assert.notEqual(toQueue!.span, toBucket!.span);
+	assert.notEqual(toQueue!.span, RECORDING.parent);
+	// What the sender is handed and what the provider stamps: the run's trace, under the delivery.
+	assert.deepEqual(queue, [{ ...RECORDING, parent: toQueue!.span }]);
+	assert.deepEqual(bucket, [{ ...RECORDING, parent: toBucket!.span }]);
+	assert.deepEqual(propagated, [queue[0], bucket[0]]);
+});
+
+test('with nothing recording, a hop names no span and nothing is propagated', async () => {
+	const queue = traced('aws_sqs_queue');
+	let calls = 0;
+
+	const report = await handle(arrival([{ body: 'one' }]), [neighbor('aws_sqs_queue', '0', 'Q')], CTX, {
+		propagate: () => (calls += 1),
+	});
+
+	assert.equal('span' in report.hops[0]!, false);
+	assert.deepEqual(queue, [undefined]);
+	assert.equal(calls, 0);
 });
